@@ -511,6 +511,149 @@ DO NOT change the person's appearance. The face and body MUST match Image 1 exac
     return;
   }
 
+  // ─── Avatar Generation (Imagen 4.0 Ultra + Gemini fallback) ───
+  if (req.url === '/api/avatar/generate' && req.method === 'POST') {
+    let body = [];
+    req.on('data', c => body.push(c));
+    req.on('end', async () => {
+      try {
+        const { measurements, appearance, referencePhotos, variant, feedback, previousAvatarUrl } = JSON.parse(Buffer.concat(body).toString());
+        if (!appearance || !appearance.fullDescription) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Missing appearance data' })); return; }
+
+        const v = variant || 'canonical';
+        const POSES = {
+          canonical: { pose: 'Standing in a neutral A-pose — arms slightly away from body, fingers relaxed, feet shoulder-width apart, looking straight at camera with neutral expression.', clothing: 'Wearing a plain white fitted crew-neck t-shirt and plain medium-gray fitted above-knee shorts. No logos, no patterns. Form-fitting to show body shape.' },
+          relaxed: { pose: 'Standing relaxed — weight slightly on one leg, arms at sides, slight smile.', clothing: 'Wearing a plain black fitted v-neck t-shirt and dark blue fitted jeans.' },
+          fashion: { pose: 'Fashion editorial pose — slight hip tilt, one hand on hip, chin slightly lifted, confident expression.', clothing: 'Wearing a plain white button-up shirt tucked into high-waisted black tailored trousers.' },
+        };
+        const p = POSES[v] || POSES.canonical;
+
+        // Height description
+        const cm = measurements.heightCm || 170;
+        const ft = Math.floor(cm / 30.48);
+        const inches = Math.round((cm / 30.48 - ft) * 12);
+        const heightDesc = `${cm}cm (${ft}'${inches}")`;
+
+        const feedbackBlock = feedback ? `\nCRITICAL USER CORRECTIONS:\n${feedback}\nApply ALL corrections.` : '';
+
+        const prompt = `Generate a single ultra-high-definition full-body photograph of a person with these EXACT features:
+
+APPEARANCE:
+${appearance.fullDescription}
+- Skin tone: ${appearance.skinTone}, Hair: ${appearance.hairStyle} ${appearance.hairColor}, Eyes: ${appearance.eyeColor}
+- Face shape: ${appearance.faceShape}, Build: ${appearance.build}, Body shape: ${appearance.bodyShape}
+${appearance.distinctiveFeatures ? '- Distinctive features: ' + appearance.distinctiveFeatures : ''}
+
+BODY PROPORTIONS (CRITICAL):
+- Height: ${heightDesc}, Weight: ${measurements.weightKg}kg
+- Chest: ${measurements.chestCm}cm, Waist: ${measurements.waistCm}cm, Hips: ${measurements.hipsCm}cm
+- Gender: ${measurements.gender}${measurements.bodyType ? ', Body type: ' + measurements.bodyType : ''}
+${feedbackBlock}
+
+POSE: ${p.pose}
+CLOTHING: ${p.clothing}
+
+TECHNICAL: Full body head-to-feet, centered, plain solid light gray (#D0D0D0) studio background, professional studio lighting, 85mm lens, ultra-sharp, hyperrealistic photography ONLY — NO illustration, cartoon, or CGI.`;
+
+        // Build reference images from uploaded photos
+        const refs = (referencePhotos || []).slice(0, 3).map(img => ({
+          referenceType: 2,
+          referenceImage: { bytesBase64Encoded: img.includes(',') ? img.split(',')[1] : img },
+        }));
+
+        // If regenerating with previous avatar, load it as primary reference
+        if (previousAvatarUrl && previousAvatarUrl.startsWith('/')) {
+          try {
+            let prevB64;
+            const localPath = path.join(__dirname, previousAvatarUrl);
+            if (fs.existsSync(localPath)) {
+              prevB64 = fs.readFileSync(localPath).toString('base64');
+            } else {
+              prevB64 = await httpPost_GET(`${CINDERELLA}${previousAvatarUrl}`);
+            }
+            if (prevB64) refs.unshift({ referenceType: 2, referenceImage: { bytesBase64Encoded: prevB64 } });
+          } catch(e) { console.log('[Avatar] Could not load previous avatar:', e.message); }
+        }
+
+        let resultData = null, resultMime = 'image/png';
+
+        // Try Imagen 4.0 Ultra → Imagen 4.0
+        for (const model of ['imagen-4.0-ultra-generate-001', 'imagen-4.0-generate-001']) {
+          try {
+            console.log('[Avatar] Trying ' + model + '...');
+            const imagenBody = JSON.stringify({
+              instances: [{ prompt, ...(refs.length > 0 ? { referenceImages: refs } : {}) }],
+              parameters: { sampleCount: 1, aspectRatio: '3:4', personGeneration: 'allow_all' },
+            });
+            const result = await httpPost(`https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${GEMINI_KEY}`, imagenBody, 120000);
+            const pred = result.predictions?.[0];
+            if (pred?.bytesBase64Encoded) {
+              resultData = pred.bytesBase64Encoded;
+              resultMime = pred.mimeType || 'image/png';
+              console.log('[Avatar] ✓ Generated with ' + model);
+              break;
+            }
+          } catch (e) { console.log('[Avatar] ' + model + ' error:', e.message); }
+        }
+
+        // Fallback: Gemini image gen
+        if (!resultData) {
+          const refParts = (referencePhotos || []).slice(0, 3).map(img => ({
+            inline_data: { mime_type: 'image/jpeg', data: img.includes(',') ? img.split(',')[1] : img },
+          }));
+          const fullPrompt = refParts.length > 0
+            ? `Study ALL reference photos — they show the SAME person. Generate a new image of this EXACT same person.\n\n${prompt}`
+            : prompt;
+
+          for (const model of ['gemini-2.0-flash-exp-image-generation', 'gemini-2.0-flash-preview-image-generation']) {
+            try {
+              console.log('[Avatar] Trying ' + model + '...');
+              const gemResult = await httpPost(
+                `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`,
+                JSON.stringify({ contents: [{ parts: [...refParts, { text: fullPrompt }] }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'] } }),
+                120000
+              );
+              const respParts = gemResult.candidates?.[0]?.content?.parts || [];
+              const imgPart = respParts.find(pt => pt.inlineData || pt.inline_data);
+              if (imgPart) {
+                const inl = imgPart.inlineData || imgPart.inline_data;
+                resultData = inl.data;
+                resultMime = inl.mimeType || inl.mime_type || 'image/png';
+                console.log('[Avatar] ✓ Generated with ' + model);
+                break;
+              }
+            } catch (e) { console.log('[Avatar] ' + model + ' error:', e.message); }
+          }
+        }
+
+        if (!resultData) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'All image generation models failed' }));
+          return;
+        }
+
+        // Save to local filesystem
+        const avatarId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        const ext = resultMime.includes('jpeg') || resultMime.includes('jpg') ? 'jpg' : 'png';
+        const filename = `${avatarId}-${v}.${ext}`;
+        const dir = path.join(__dirname, 'avatars');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, filename), Buffer.from(resultData, 'base64'));
+
+        const url = `/avatars/${filename}`;
+        console.log('[Avatar] Saved: ' + url);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ url, avatarId }));
+      } catch (e) {
+        console.error('[Avatar] Error:', e.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
   // ─── Proxy /api/* to Cinderella ───
   if (req.url.startsWith('/api/')) {
     let body = [];
@@ -545,8 +688,22 @@ DO NOT change the person's appearance. The face and body MUST match Image 1 exac
     return;
   }
 
-  // ─── Proxy /avatars/* to Cinderella ───
+  // ─── Serve /avatars/* locally, fallback to Cinderella proxy ───
   if (req.url.startsWith('/avatars/')) {
+    const localPath = path.join(__dirname, req.url);
+    if (fs.existsSync(localPath)) {
+      const ext = path.extname(localPath).toLowerCase();
+      fs.readFile(localPath, (err, data) => {
+        if (err) { res.writeHead(404); res.end('Not found'); return; }
+        res.writeHead(200, {
+          'Content-Type': MIME[ext] || 'image/png',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+        });
+        res.end(data);
+      });
+      return;
+    }
+    // Fallback: proxy to Cinderella
     const url = new URL(req.url, CINDERELLA);
     https.get(url, (proxyRes) => {
       res.writeHead(proxyRes.statusCode, {
