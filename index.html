@@ -1,0 +1,3644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cinderella — Virtual Clothing Store</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&display=swap');
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0c0b0a; overflow: hidden; font-family: 'DM Sans', sans-serif; }
+canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- In-Game Overlay for Avatar & Try-On -->
+<div id="overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; z-index:100; font-family:'Courier New',monospace; color:#fff;">
+  <div style="position:absolute; inset:0; background:rgba(10,8,20,0.92);"></div>
+  <div id="overlay-content" style="position:relative; max-width:700px; margin:0 auto; padding:24px; height:100%; overflow-y:auto;"></div>
+</div>
+<input type="file" id="photo-input" accept="image/*" multiple style="display:none" />
+
+<style>
+  #overlay ::-webkit-scrollbar { width: 6px; }
+  #overlay ::-webkit-scrollbar-thumb { background: #4a3f6b; border-radius: 3px; }
+  .ov-btn { background:#6c5ce7; border:2px solid #8b7ff0; color:#fff; padding:10px 22px; border-radius:8px; cursor:pointer; font-family:inherit; font-size:13px; transition:background 0.2s; display:inline-block; text-align:center; }
+  .ov-btn:hover { background:#7d6ff0; }
+  .ov-btn-gold { background:linear-gradient(135deg,#ffd700,#ff8c00); border:none; color:#1a1a2e; font-weight:bold; }
+  .ov-btn-gold:hover { filter:brightness(1.1); }
+  .ov-btn-dim { background:#333; border:1px solid #555; }
+  .ov-btn-dim:hover { background:#444; }
+  .ov-card { background:rgba(30,25,50,0.9); border:1px solid #4a3f6b; border-radius:10px; padding:16px; margin-bottom:12px; }
+  .ov-input { background:#1a1a2e; border:1px solid #4a3f6b; color:#fff; padding:8px 12px; border-radius:6px; font-family:inherit; font-size:13px; width:100%; box-sizing:border-box; }
+  .ov-input:focus { outline:none; border-color:#6c5ce7; }
+  .ov-select { background:#1a1a2e; border:1px solid #4a3f6b; color:#fff; padding:8px 12px; border-radius:6px; font-family:inherit; font-size:13px; width:100%; }
+  .ov-label { color:#ffd700; font-size:11px; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px; display:block; }
+  .ov-title { color:#ffd700; font-size:20px; font-weight:bold; margin-bottom:8px; text-align:center; }
+  .ov-subtitle { color:#ccc; font-size:12px; text-align:center; margin-bottom:20px; }
+  .ov-grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .ov-grid3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+  .ov-photos { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
+  .ov-photos img { width:80px; height:100px; object-fit:cover; border-radius:6px; border:2px solid #4a3f6b; }
+  .ov-field { margin-bottom:10px; }
+  .ov-row { display:flex; gap:10px; justify-content:center; margin-top:16px; flex-wrap:wrap; }
+  .ov-status { text-align:center; color:#888; font-size:12px; margin:12px 0; }
+  .ov-spin { display:inline-block; width:20px; height:20px; border:2px solid #333; border-top-color:#ffd700; border-radius:50%; animation:ovspin 0.8s linear infinite; vertical-align:middle; margin-right:8px; }
+  @keyframes ovspin { to { transform:rotate(360deg); } }
+  .ov-bodytype { display:inline-block; padding:8px 14px; border:1px solid #4a3f6b; border-radius:8px; cursor:pointer; font-size:12px; text-align:center; transition:all 0.2s; margin:4px; }
+  .ov-bodytype:hover { border-color:#6c5ce7; }
+  .ov-bodytype.active { border-color:#ffd700; background:rgba(255,215,0,0.1); color:#ffd700; }
+  .ov-avatar-img { max-width:220px; margin:12px auto; display:block; border-radius:12px; border:2px solid #6c5ce7; }
+  .ov-tryon-img { max-width:300px; margin:12px auto; display:block; border-radius:12px; border:2px solid #ffd700; }
+  .ov-progress { width:100%; height:6px; background:#1a1a2e; border-radius:3px; overflow:hidden; margin:12px 0; }
+  .ov-progress-bar { height:100%; background:linear-gradient(90deg,#6c5ce7,#ffd700); transition:width 0.5s; border-radius:3px; }
+  .ov-analysis-item { margin-bottom:8px; }
+  .ov-analysis-item span:first-child { color:#ffd700; }
+  .ov-analysis-item span:last-child { color:#ccc; }
+</style>
+
+<script>
+// ============================================================
+// CINDERELLA — Virtual Clothing Store
+// ============================================================
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// --- Fullscreen Support ---
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  } else {
+    document.exitFullscreen().catch(() => {});
+  }
+}
+document.addEventListener('fullscreenchange', () => { resize(); });
+
+// --- Audio ---
+let audioCtx;
+function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+function playSound(freq, dur, type='square', vol=0.08) {
+  initAudio();
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(vol, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(); o.stop(audioCtx.currentTime + dur);
+}
+function sfxClick() { playSound(600, 0.08); }
+function sfxStep() { playSound(200 + Math.random()*100, 0.05, 'triangle', 0.03); }
+function sfxTransition() { playSound(300, 0.3, 'triangle', 0.05); }
+function sfxAddCart() { playSound(800, 0.1, 'sine'); playSound(1200, 0.15, 'sine', 0.06); }
+function sfxCheckout() { playSound(440, 0.15, 'sine'); setTimeout(() => playSound(660, 0.2, 'sine'), 150); }
+function sfxLevelUp() { [523,659,784,1047].forEach((f,i) => setTimeout(() => playSound(f, 0.3, 'sine', 0.1), i*100)); }
+
+document.addEventListener('click', () => initAudio(), { once: true });
+document.addEventListener('keydown', () => initAudio(), { once: true });
+
+// --- Constants ---
+const TILE = 48;
+const ROOM_W = 14;  // tiles
+const ROOM_H = 10;
+
+// --- Input ---
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.key.toLowerCase()] = true;
+  if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); handleInteract(); }
+});
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+// --- Colors (Luxury Fashion Palette) ---
+const C = {
+  bg: '#0c0b0a',
+  floorLight: '#f0ebe3', floorDark: '#e8e0d4', floorVein: '#d5cbbf',
+  floorUpper: '#e8e0ee', floorUpperDark: '#ddd3e8', // soft lavender
+  floorLower: '#dde8df', floorLowerDark: '#d0ddd3', // sage green
+  floorTryOn: '#e8d5d0', floorTryOnDark: '#ddc8c2', // warm rose
+  wall: '#2a1f14', wallTop: '#3a2e20', wallAccent: '#c9a96e',
+  door: '#1a120a', doorFrame: '#c9a96e',
+  counter: '#2a1f14', counterEdge: '#c9a96e',
+  gold: '#c9a96e', roseGold: '#b76e79', champagne: '#f7e7ce',
+  rack: '#2a1f14',
+};
+
+// --- Entities ---
+const player = { x: 7, y: 7, dir: 0, frame: 0, stepTimer: 0, moving: false };
+const shiro = { x: 7, y: 4, bobTimer: 0 };
+
+// Walking path state: when shiro walks with player to a room
+let walkSequence = null; // { steps: [{entity, tx, ty}...], stepIdx, onDone }
+
+// --- State ---
+const state = {
+  room: 'reception',       // reception | upperwear | lowerwear | tryon
+  phase: 'free',           // free | dialogue | walking | transition | shopping | tryon | checkout
+  cart: [],
+  visitedRooms: [],
+  dialogueActive: false,
+  transition: null,        // { alpha, fadingOut, target, callback }
+  _cartItemBtns: [],       // clickable cart item thumbnails in try-on room
+  _fullscreenBtn: null,    // fullscreen toggle button bounds
+  _continueShoppingBtn: null, // "Continue Shopping" button in try-on room
+  _checkoutBtn: null,          // "Checkout" button in try-on room
+};
+
+// --- Room Title Card ---
+let titleCard = { text: '', alpha: 0, timer: 0, active: false };
+
+// --- Player data ---
+let pdata = { xp: 0, level: 1 };
+const LVL = [0, 0, 100, 300, 600, 1000];
+try { const s = JSON.parse(localStorage.getItem('cinderella_save')); if (s) pdata = s; } catch(e) {}
+function saveData() { localStorage.setItem('cinderella_save', JSON.stringify(pdata)); }
+
+// --- Shiro Memory System (persists across sessions) ---
+let shiroMemory = {
+  visits: 0,
+  playerName: null,
+  styleNotes: [],
+  purchaseHistory: [],
+  tryOnHistory: [],
+  lastVisit: null,
+  relationship: 0,
+};
+let sessionHistory = [];
+
+try {
+  const saved = JSON.parse(localStorage.getItem('cinderella_shiro_memory'));
+  if (saved) shiroMemory = saved;
+} catch(e) {}
+
+function saveShiroMemory() {
+  shiroMemory.lastVisit = new Date().toISOString();
+  localStorage.setItem('cinderella_shiro_memory', JSON.stringify(shiroMemory));
+}
+
+async function askShiro(playerAction) {
+  try {
+    const resp = await fetch('/api/shiro/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        memory: JSON.stringify(shiroMemory),
+        currentRoom: state.room,
+        cart: state.cart,
+        playerAction: playerAction,
+        sessionHistory: sessionHistory.slice(-20),
+      }),
+    });
+    if (!resp.ok) throw new Error('Shiro API failed');
+    const data = await resp.json();
+    sessionHistory.push({ role: 'user', text: playerAction });
+    sessionHistory.push({ role: 'model', text: JSON.stringify(data) });
+    if (data.stylingNote) {
+      shiroMemory.styleNotes.push(data.stylingNote);
+      if (shiroMemory.styleNotes.length > 20) shiroMemory.styleNotes.shift();
+    }
+    shiroMemory.relationship = Math.min(100, shiroMemory.relationship + 2);
+    saveShiroMemory();
+    return data;
+  } catch (e) {
+    return {
+      dialogue: "Welcome to Cinderella! Where shall we start today?",
+      action: null,
+      options: [
+        { text: "Upperwear", value: "go_upperwear" },
+        { text: "Lowerwear", value: "go_lowerwear" },
+      ],
+      mood: "friendly",
+    };
+  }
+}
+
+// --- Products (from Cinderella AI catalog) ---
+const UPPER_PRODUCTS = [
+  { id:'u1', cid:1,  name:'Beige Draped Top', price:45.90, color:'#d4b896', cat:'upper', type:'top', brand:'Zara', img:'closet/01-beige-top-black-pants.jpg' },
+  { id:'u2', cid:2,  name:'Striped Polo Knit', price:39.90, color:'#8b7d6b', cat:'upper', type:'polo', brand:'Zara', img:'closet/05-striped-polo-shorts.jpg' },
+  { id:'u3', cid:3,  name:'Lace Corset Top', price:49.90, color:'#2c2c2c', cat:'upper', type:'top', brand:'Zara', img:'closet/12-lace-corset-top.jpg' },
+  { id:'u4', cid:5,  name:'Black Zip Jacket', price:89.90, color:'#1a1a1a', cat:'upper', type:'jacket', brand:'Zara', img:'closet/02-black-jacket-denim.jpg' },
+  { id:'u5', cid:7,  name:'Scarf Trench Coat', price:149.00, color:'#c4a882', cat:'upper', type:'coat', brand:'Zara', img:'closet/08-trench-coat.jpg' },
+  { id:'u6', cid:6,  name:'Knit Cardigan', price:59.90, color:'#a89070', cat:'upper', type:'cardigan', brand:'Zara', img:'closet/06-cardigan-olive-trousers.jpg' },
+  { id:'u7', cid:8,  name:'Navy Drawstring Jacket', price:99.90, color:'#2c3e50', cat:'upper', type:'jacket', brand:'Zara', img:'closet/11-navy-drawstring-jacket.jpg' },
+];
+const LOWER_PRODUCTS = [
+  { id:'l1', cid:9,  name:'Brown Wide-Leg Pants', price:49.90, color:'#8b6914', cat:'lower', type:'pants', brand:'Zara', img:'closet/03-white-tee-brown-pants.jpg' },
+  { id:'l2', cid:10, name:'Barrel Jeans', price:45.90, color:'#5b7fa5', cat:'lower', type:'jeans', brand:'Zara', img:'closet/04-sweater-barrel-jeans.jpg' },
+  { id:'l3', cid:11, name:'White Pants Set', price:59.90, color:'#f0ece2', cat:'lower', type:'pants', brand:'Zara', img:'closet/09-suede-jacket-white-pants.jpg' },
+  { id:'l4', cid:12, name:'Cargo Pants', price:69.90, color:'#4a5a3a', cat:'lower', type:'cargo', brand:'Zara', img:'closet/10-bomber-cargo-pants.jpg' },
+  { id:'l5', cid:13, name:'Halter Midi Dress', price:69.90, color:'#c0392b', cat:'lower', type:'dress', brand:'Zara', img:'closet/14-halter-midi-dress.jpg' },
+  { id:'l6', cid:14, name:'Pink Cashmere Look', price:55.90, color:'#e8a0b0', cat:'lower', type:'dress', brand:'Zara', img:'closet/07-pink-sweater-jeans.jpg' },
+  { id:'l7', cid:4,  name:'Gingham Peplum Top', price:35.90, color:'#6b8e6b', cat:'lower', type:'top', brand:'Zara', img:'closet/13-gingham-peplum-top.jpg' },
+];
+
+// Preload all product images
+const productImages = {};
+let imagesLoaded = 0;
+const totalImages = UPPER_PRODUCTS.length + LOWER_PRODUCTS.length;
+[...UPPER_PRODUCTS, ...LOWER_PRODUCTS].forEach(p => {
+  const img = new Image();
+  img.onload = () => { imagesLoaded++; };
+  img.src = p.img;
+  productImages[p.id] = img;
+});
+const PRODUCT_POS = {
+  upperwear: [{x:2,y:2},{x:5,y:2},{x:8,y:2},{x:11,y:2},{x:2,y:5},{x:5,y:5},{x:9,y:5}],
+  lowerwear: [{x:2,y:2},{x:5,y:2},{x:8,y:2},{x:11,y:2},{x:2,y:5},{x:5,y:5},{x:9,y:5}],
+};
+
+// Door positions in reception
+const DOORS = {
+  upper: { x: 1, y: 5, label: 'Upperwear' },     // left wall
+  lower: { x: ROOM_W-2, y: 5, label: 'Lowerwear' }, // right wall
+  tryon:  { x: 7, y: 0, label: 'Try-On' },          // top wall
+};
+
+// --- Helpers ---
+function shade(color, pct) {
+  const n = parseInt(color.slice(1), 16), a = Math.round(2.55*pct);
+  const R = Math.max(0,Math.min(255,(n>>16)+a));
+  const G = Math.max(0,Math.min(255,((n>>8)&0xff)+a));
+  const B = Math.max(0,Math.min(255,(n&0xff)+a));
+  return '#'+(0x1000000+R*0x10000+G*0x100+B).toString(16).slice(1);
+}
+
+function offset() {
+  return {
+    ox: (canvas.width - ROOM_W * TILE) / 2,
+    oy: (canvas.height - ROOM_H * TILE) / 2
+  };
+}
+
+function dist(ax, ay, bx, by) { return Math.sqrt((ax-bx)**2 + (ay-by)**2); }
+
+// ============================================================
+// DIALOGUE SYSTEM
+// ============================================================
+let dlg = { speaker:'', text:'', displayed:'', charIdx:0, timer:0, options:[], resolve:null, active:false };
+const DLG_SPEED = 25; // ms per char
+
+function showDialogue(speaker, text, options=[]) {
+  return new Promise(resolve => {
+    dlg = { speaker, text, displayed:'', charIdx:0, timer:0, options, resolve, active:true };
+    state.phase = 'dialogue';
+  });
+}
+
+function updateDialogue(dt) {
+  if (!dlg.active) return;
+  if (dlg.charIdx < dlg.text.length) {
+    dlg.timer += dt;
+    while (dlg.timer >= DLG_SPEED && dlg.charIdx < dlg.text.length) {
+      dlg.timer -= DLG_SPEED;
+      dlg.charIdx++;
+      dlg.displayed = dlg.text.substring(0, dlg.charIdx);
+    }
+  }
+}
+
+function drawDialogue() {
+  if (!dlg.active) return;
+  const bw = Math.min(580, canvas.width - 50);
+  const portraitW = 60;
+  const bx = (canvas.width - bw) / 2;
+  const by = canvas.height - 140;
+  const bh = 115;
+
+  // Rich gradient background with depth
+  ctx.save();
+  const boxGrad = ctx.createLinearGradient(bx, by, bx + bw, by + bh);
+  boxGrad.addColorStop(0, 'rgba(22,16,12,0.92)');
+  boxGrad.addColorStop(0.3, 'rgba(18,14,10,0.94)');
+  boxGrad.addColorStop(0.7, 'rgba(20,16,12,0.93)');
+  boxGrad.addColorStop(1, 'rgba(24,18,14,0.92)');
+  ctx.fillStyle = boxGrad;
+  roundRect(bx, by, bw, bh, 10);
+  ctx.fill();
+
+  // Inner subtle glow along top edge
+  const topGlow = ctx.createLinearGradient(bx, by, bx, by + 20);
+  topGlow.addColorStop(0, 'rgba(201,169,110,0.08)');
+  topGlow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = topGlow;
+  roundRect(bx, by, bw, 20, 10);
+  ctx.fill();
+
+  // Gold border with corner accents
+  ctx.strokeStyle = 'rgba(201,169,110,0.5)';
+  ctx.lineWidth = 1.2;
+  roundRect(bx, by, bw, bh, 10);
+  ctx.stroke();
+  // Inner subtle border
+  ctx.strokeStyle = 'rgba(201,169,110,0.1)';
+  ctx.lineWidth = 0.5;
+  roundRect(bx + 3, by + 3, bw - 6, bh - 6, 8);
+  ctx.stroke();
+  ctx.restore();
+
+  // Portrait area — small circular with speaker initial/icon
+  const portX = bx + 16 + portraitW / 2;
+  const portY = by + bh / 2 - 4;
+  ctx.save();
+  // Portrait circle background
+  const portGrad = ctx.createRadialGradient(portX, portY, 0, portX, portY, portraitW / 2);
+  portGrad.addColorStop(0, 'rgba(201,169,110,0.15)');
+  portGrad.addColorStop(1, 'rgba(201,169,110,0.05)');
+  ctx.fillStyle = portGrad;
+  ctx.beginPath();
+  ctx.arc(portX, portY, portraitW / 2 - 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(201,169,110,0.35)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(portX, portY, portraitW / 2 - 2, 0, Math.PI * 2);
+  ctx.stroke();
+  // Draw mini character in portrait
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(portX, portY, portraitW / 2 - 3, 0, Math.PI * 2);
+  ctx.clip();
+  const isShiroSpeaker = dlg.speaker.includes('Shiro');
+  // Simple head in portrait
+  ctx.fillStyle = '#e8c8a0';
+  ctx.beginPath();
+  ctx.arc(portX, portY + 4, 12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = isShiroSpeaker ? '#1a1a22' : '#5a3520';
+  ctx.beginPath();
+  ctx.ellipse(portX, portY - 3, 13, 8, 0, Math.PI * 0.8, Math.PI * 2.2);
+  ctx.fill();
+  // Eyes
+  ctx.fillStyle = isShiroSpeaker ? '#2c3e50' : '#3a5a4a';
+  ctx.beginPath(); ctx.arc(portX - 4, portY + 3, 1.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(portX + 4, portY + 3, 1.5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(portX - 3.5, portY + 2.5, 0.6, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(portX + 4.5, portY + 2.5, 0.6, 0, Math.PI * 2); ctx.fill();
+  // Body hint at bottom
+  ctx.fillStyle = isShiroSpeaker ? '#1a1a1e' : '#e8d5d0';
+  ctx.beginPath();
+  ctx.ellipse(portX, portY + 22, 14, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  ctx.restore();
+
+  // Speaker name — to the right of portrait
+  const textLeft = bx + portraitW + 28;
+  ctx.fillStyle = C.gold;
+  ctx.font = '600 13px "DM Sans", sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(dlg.speaker, textLeft, by + 22);
+
+  // Decorative line under speaker name
+  const nameW = ctx.measureText(dlg.speaker).width;
+  ctx.strokeStyle = 'rgba(201,169,110,0.25)';
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  ctx.moveTo(textLeft, by + 27);
+  ctx.lineTo(textLeft + nameW + 20, by + 27);
+  ctx.stroke();
+
+  // Text
+  ctx.fillStyle = '#f0ece2';
+  ctx.font = '400 12px "DM Sans", sans-serif';
+  wrapText(dlg.displayed, textLeft, by + 44, bw - portraitW - 52, 18);
+
+  // Options — pill-shaped buttons with hover glow effect
+  if (dlg.charIdx >= dlg.text.length && dlg.options.length > 0) {
+    const optY = by - 12;
+    const optW = 155;
+    const optH = 34;
+    const totalW = dlg.options.length * optW + (dlg.options.length - 1) * 12;
+    let startX = (canvas.width - totalW) / 2;
+
+    dlg.options.forEach((opt, i) => {
+      const ox = startX + i * (optW + 12);
+      const hover = mouseX >= ox && mouseX <= ox + optW && mouseY >= optY - optH && mouseY <= optY;
+
+      // Hover glow effect behind button
+      if (hover) {
+        ctx.save();
+        const glowGrad = ctx.createRadialGradient(ox + optW / 2, optY - optH / 2, 0, ox + optW / 2, optY - optH / 2, optW * 0.6);
+        glowGrad.addColorStop(0, 'rgba(201,169,110,0.15)');
+        glowGrad.addColorStop(1, 'rgba(201,169,110,0)');
+        ctx.fillStyle = glowGrad;
+        ctx.fillRect(ox - 10, optY - optH - 8, optW + 20, optH + 16);
+        ctx.restore();
+      }
+
+      if (hover) {
+        const hGrad = ctx.createLinearGradient(ox, optY - optH, ox + optW, optY);
+        hGrad.addColorStop(0, C.gold);
+        hGrad.addColorStop(1, '#d4b87a');
+        ctx.fillStyle = hGrad;
+      } else {
+        const normGrad = ctx.createLinearGradient(ox, optY - optH, ox + optW, optY);
+        normGrad.addColorStop(0, 'rgba(22,18,14,0.9)');
+        normGrad.addColorStop(1, 'rgba(26,20,16,0.88)');
+        ctx.fillStyle = normGrad;
+      }
+      roundRect(ox, optY - optH, optW, optH, 17);
+      ctx.fill();
+      ctx.strokeStyle = hover ? C.gold : 'rgba(201,169,110,0.4)';
+      ctx.lineWidth = hover ? 1.5 : 0.8;
+      roundRect(ox, optY - optH, optW, optH, 17);
+      ctx.stroke();
+
+      ctx.fillStyle = hover ? '#0c0b0a' : C.champagne;
+      ctx.font = '500 11px "DM Sans", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(opt.text, ox + optW / 2, optY - optH / 2 + 4);
+    });
+  } else if (dlg.charIdx >= dlg.text.length && dlg.options.length === 0) {
+    // Pulsing continue hint
+    const pulse = 0.3 + Math.sin(Date.now() / 500) * 0.15;
+    ctx.fillStyle = `rgba(180,170,155,${pulse})`;
+    ctx.font = '300 10px "DM Sans", sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText('[SPACE] continue', bx + bw - 18, by + bh - 12);
+  }
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.lineTo(x+w-r, y); ctx.quadraticCurveTo(x+w, y, x+w, y+r);
+  ctx.lineTo(x+w, y+h-r); ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+  ctx.lineTo(x+r, y+h); ctx.quadraticCurveTo(x, y+h, x, y+h-r);
+  ctx.lineTo(x, y+r); ctx.quadraticCurveTo(x, y, x+r, y);
+  ctx.closePath();
+}
+
+function wrapText(text, x, y, maxW, lineH) {
+  const words = text.split(' ');
+  let line = '';
+  let cy = y;
+  for (const word of words) {
+    const test = line + word + ' ';
+    if (ctx.measureText(test).width > maxW && line) {
+      ctx.fillText(line.trim(), x, cy);
+      line = word + ' ';
+      cy += lineH;
+    } else {
+      line = test;
+    }
+  }
+  ctx.fillText(line.trim(), x, cy);
+}
+
+// Mouse for dialogue options + try-on button
+let mouseX = 0, mouseY = 0;
+canvas.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
+canvas.addEventListener('click', e => {
+  initAudio();
+  
+  // Fullscreen toggle button
+  if (state._fullscreenBtn) {
+    const b = state._fullscreenBtn;
+    if (e.clientX >= b.x && e.clientX <= b.x+b.w && e.clientY >= b.y && e.clientY <= b.y+b.h) {
+      toggleFullscreen();
+      return;
+    }
+  }
+
+  // Reset session button
+  if (state._resetBtn) {
+    const b = state._resetBtn;
+    if (e.clientX >= b.x && e.clientX <= b.x+b.w && e.clientY >= b.y && e.clientY <= b.y+b.h) {
+      resetSession();
+      return;
+    }
+  }
+
+  // "Try Entire Outfit" button
+  if (state.room === 'tryon' && state._tryAllBtn) {
+    const b = state._tryAllBtn;
+    if (e.clientX >= b.x && e.clientX <= b.x+b.w && e.clientY >= b.y && e.clientY <= b.y+b.h) {
+      openTryOnFullOutfit();
+      return;
+    }
+  }
+
+  // Per-item Try-On button clicks (in try-on room)
+  if (state.room === 'tryon' && state._tryOnBtns) {
+    for (const b of state._tryOnBtns) {
+      if (e.clientX >= b.x && e.clientX <= b.x+b.w && e.clientY >= b.y && e.clientY <= b.y+b.h) {
+        openTryOnForItem(b.item);
+        return;
+      }
+    }
+  }
+
+  // Cart item thumbnail/name clicks (browse details in try-on room)
+  if (state.room === 'tryon' && state._cartItemBtns) {
+    for (const b of state._cartItemBtns) {
+      if (e.clientX >= b.x && e.clientX <= b.x+b.w && e.clientY >= b.y && e.clientY <= b.y+b.h) {
+        sfxClick();
+        showProductPopup(b.item);
+        return;
+      }
+    }
+  }
+
+  // "Continue Shopping" button in try-on room
+  if (state.room === 'tryon' && state._continueShoppingBtn) {
+    const b = state._continueShoppingBtn;
+    if (e.clientX >= b.x && e.clientX <= b.x+b.w && e.clientY >= b.y && e.clientY <= b.y+b.h) {
+      sfxClick();
+      transitionTo('reception', () => {
+        setupRoom('reception');
+        state.phase = 'free';
+        flowRunning = false;
+        // Auto-trigger Shiro to greet back and offer checkout if cart has items
+        if (state.cart.length > 0) {
+          setTimeout(() => shiroConverse('I came back from the fitting room. I have ' + state.cart.length + ' item(s) in my cart and want to checkout or keep browsing.'), 400);
+        }
+      });
+      return;
+    }
+  }
+
+  // "Checkout" button in try-on room
+  if (state.room === 'tryon' && state._checkoutBtn) {
+    const b = state._checkoutBtn;
+    if (e.clientX >= b.x && e.clientX <= b.x+b.w && e.clientY >= b.y && e.clientY <= b.y+b.h) {
+      sfxClick();
+      transitionTo('reception', () => {
+        setupRoom('reception');
+        state.phase = 'free';
+        flowRunning = false;
+        // Go to reception and trigger checkout via Shiro
+        setTimeout(() => shiroConverse('I want to checkout now!'), 400);
+      });
+      return;
+    }
+  }
+
+  if (dlg.active && dlg.charIdx >= dlg.text.length && dlg.options.length > 0) {
+    // Check which option clicked — must match drawDialogue() exactly
+    const by = canvas.height - 140;
+    const optY = by - 12;
+    const optW = 155;
+    const optH = 34;
+    const totalW = dlg.options.length * optW + (dlg.options.length - 1) * 12;
+    let startX = (canvas.width - totalW) / 2;
+    dlg.options.forEach((opt, i) => {
+      const ox = startX + i * (optW + 12);
+      if (e.clientX >= ox && e.clientX <= ox + optW && e.clientY >= optY - optH && e.clientY <= optY) {
+        sfxClick();
+        const resolve = dlg.resolve;
+        dlg.active = false;
+        state.phase = 'free';
+        if (resolve) resolve(opt.value);
+      }
+    });
+  }
+});
+
+// ============================================================
+// TRANSITION SYSTEM
+// ============================================================
+function transitionTo(room, callback) {
+  sfxTransition();
+  state.transition = { alpha: 0, fadingOut: true, target: room, callback };
+  state.phase = 'transition';
+  // Trigger room title card
+  const titles = { reception: '\u2728 Reception \u2728', upperwear: '\u2728 Upperwear Collection \u2728', lowerwear: '\u2728 Lowerwear Collection \u2728', tryon: '\u2728 Fitting Room \u2728' };
+  titleCard = { text: titles[room] || '', alpha: 0, timer: 0, active: true, phase: 'in' };
+}
+
+function updateTransition(dt) {
+  const t = state.transition;
+  if (!t) return;
+  if (t.fadingOut) {
+    t.alpha += (dt / 500) * (1.5 - t.alpha);
+    if (t.alpha >= 0.99) {
+      t.alpha = 1;
+      t.fadingOut = false;
+      state.room = t.target;
+      if (t.callback) t.callback();
+    }
+  } else {
+    t.alpha -= (dt / 500) * (0.5 + t.alpha);
+    if (t.alpha <= 0) {
+      state.transition = null;
+      state.phase = 'free';
+    }
+  }
+}
+
+// ============================================================
+// WALK SEQUENCE — Shiro walks with player to a door, then transition
+// ============================================================
+function startWalkToDoor(doorKey, targetRoom, onArrived) {
+  state.phase = 'walking';
+  const door = DOORS[doorKey];
+  // Both walk to the door position
+  walkSequence = {
+    playerTarget: { x: door.x, y: door.y },
+    shiroTarget: { x: door.x + (door.x < 3 ? 1 : door.x > ROOM_W-4 ? -1 : -1), y: door.y },
+    speed: 3.5,   // tiles per second
+    done: false,
+    onDone: () => {
+      // Both arrived near door → transition
+      transitionTo(targetRoom, () => {
+        setupRoom(targetRoom);
+        if (onArrived) onArrived();
+      });
+    }
+  };
+}
+
+function updateWalkSequence(dt) {
+  if (!walkSequence || walkSequence.done) return;
+  const s = walkSequence.speed * dt / 1000;
+
+  // Move player toward target
+  const pdx = walkSequence.playerTarget.x - player.x;
+  const pdy = walkSequence.playerTarget.y - player.y;
+  const pd = Math.sqrt(pdx*pdx + pdy*pdy);
+  if (pd > 0.15) {
+    player.x += (pdx/pd) * Math.min(s, pd);
+    player.y += (pdy/pd) * Math.min(s, pd);
+    player.moving = true;
+    player.frame++;
+    player.dir = Math.abs(pdx) > Math.abs(pdy) ? (pdx > 0 ? 3 : 2) : (pdy > 0 ? 0 : 1);
+  } else {
+    player.moving = false;
+  }
+
+  // Move shiro toward target
+  const sdx = walkSequence.shiroTarget.x - shiro.x;
+  const sdy = walkSequence.shiroTarget.y - shiro.y;
+  const sd = Math.sqrt(sdx*sdx + sdy*sdy);
+  if (sd > 0.15) {
+    shiro.x += (sdx/sd) * Math.min(s, sd);
+    shiro.y += (sdy/sd) * Math.min(s, sd);
+  }
+
+  // Both arrived?
+  if (pd <= 0.15 && sd <= 0.15) {
+    walkSequence.done = true;
+    walkSequence.onDone();
+    walkSequence = null;
+  }
+}
+
+// ============================================================
+// ROOM SETUP
+// ============================================================
+function setupRoom(room) {
+  switch(room) {
+    case 'reception':
+      player.x = 7; player.y = 7;
+      shiro.x = 7; shiro.y = 4;
+      break;
+    case 'upperwear':
+      player.x = 7; player.y = 8;
+      shiro.x = 6; shiro.y = 8;
+      break;
+    case 'lowerwear':
+      player.x = 7; player.y = 8;
+      shiro.x = 8; shiro.y = 8;
+      break;
+    case 'tryon':
+      player.x = 7; player.y = 6;
+      shiro.x = 7; shiro.y = 8;
+      break;
+  }
+}
+
+// ============================================================
+// PLAYER MOVEMENT
+// ============================================================
+function updatePlayer(dt) {
+  if (state.phase !== 'free' && state.phase !== 'shopping' && state.phase !== 'tryon') return;
+
+  let dx = 0, dy = 0;
+  if (keys['arrowleft'] || keys['a']) dx = -1;
+  if (keys['arrowright'] || keys['d']) dx = 1;
+  if (keys['arrowup'] || keys['w']) dy = -1;
+  if (keys['arrowdown'] || keys['s']) dy = 1;
+
+  player.moving = dx !== 0 || dy !== 0;
+
+  if (player.moving) {
+    if (dx && dy) { dx *= 0.707; dy *= 0.707; }
+    const spd = 4.5 * dt / 1000; // tiles per second
+    let nx = player.x + dx * spd;
+    let ny = player.y + dy * spd;
+
+    // Bounds
+    nx = Math.max(0.5, Math.min(ROOM_W - 1.5, nx));
+    ny = Math.max(0.5, Math.min(ROOM_H - 0.5, ny));
+
+    // Counter collision in reception
+    if (state.room === 'reception') {
+      if (nx >= 4 && nx <= 10 && ny >= 2 && ny <= 4) {
+        nx = player.x;
+        ny = player.y;
+      }
+    }
+
+    // Product collision
+    const prods = state.room === 'upperwear' ? UPPER_PRODUCTS : state.room === 'lowerwear' ? LOWER_PRODUCTS : [];
+    const ppos = PRODUCT_POS[state.room] || [];
+    for (let i = 0; i < ppos.length; i++) {
+      if (Math.abs(nx - ppos[i].x) < 0.9 && Math.abs(ny - ppos[i].y) < 0.9) {
+        nx = player.x; ny = player.y; break;
+      }
+    }
+
+    player.x = nx;
+    player.y = ny;
+
+    player.frame++;
+    player.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 3 : 2) : (dy > 0 ? 0 : 1);
+
+    // Step sounds
+    player.stepTimer += dt;
+    if (player.stepTimer > 250) { player.stepTimer = 0; sfxStep(); }
+  }
+}
+
+function updateShiro(dt) {
+  shiro.bobTimer += dt;
+}
+
+// ============================================================
+// INTERACTION
+// ============================================================
+function handleInteract() {
+  initAudio();
+
+  // If dialogue active
+  if (dlg.active) {
+    if (dlg.charIdx < dlg.text.length) {
+      // Skip typewriter
+      dlg.charIdx = dlg.text.length;
+      dlg.displayed = dlg.text;
+    } else if (dlg.options.length === 0) {
+      // Close no-option dialogue
+      const resolve = dlg.resolve;
+      dlg.active = false;
+      state.phase = 'free';
+      if (resolve) resolve(null);
+    }
+    return;
+  }
+
+  if (state.phase === 'transition' || state.phase === 'walking') return;
+
+  // Near exit door? (bottom of product/tryon rooms)
+  if (state.room !== 'reception' && dist(player.x, player.y, 7, ROOM_H - 1) < 2) {
+    handleExitDoor();
+    return;
+  }
+
+  // Near Shiro?
+  if (dist(player.x, player.y, shiro.x, shiro.y) < 2.5) {
+    handleShiroTalk();
+    return;
+  }
+
+  // Near product?
+  if (state.phase === 'shopping' || state.phase === 'free') {
+    const prods = state.room === 'upperwear' ? UPPER_PRODUCTS : state.room === 'lowerwear' ? LOWER_PRODUCTS : [];
+    const ppos = PRODUCT_POS[state.room] || [];
+    for (let i = 0; i < prods.length; i++) {
+      if (dist(player.x, player.y, ppos[i].x, ppos[i].y) < 2) {
+        showProductPopup(prods[i]);
+        return;
+      }
+    }
+  }
+}
+
+// --- Exit door handler ---
+async function handleExitDoor() {
+  if (flowRunning) return;
+  flowRunning = true;
+  await shiroConverse(`I'm at the exit door of the ${state.room} room and want to leave.`);
+}
+
+// --- Product popup (drawn on canvas) ---
+let popup = null; // { product, selected: false }
+
+function showProductPopup(product) {
+  popup = { product, _prevPhase: state.phase };
+  state.phase = 'dialogue'; // block movement
+  sessionHistory.push({ role: 'user', text: `[BROWSING] Looking at: ${product.name} ($${product.price}) in ${state.room}` });
+}
+
+function drawProductPopup() {
+  if (!popup) return;
+  const p = popup.product;
+  const pw = 320, ph = 410;
+  const px = (canvas.width - pw) / 2;
+  const py = (canvas.height - ph) / 2;
+
+  // Backdrop with vignette
+  ctx.fillStyle = 'rgba(0,0,0,0.65)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Panel — dark with gold border
+  const panelGrad = ctx.createLinearGradient(px, py, px, py + ph);
+  panelGrad.addColorStop(0, 'rgba(24,20,16,0.96)');
+  panelGrad.addColorStop(1, 'rgba(18,14,10,0.98)');
+  ctx.fillStyle = panelGrad;
+  roundRect(px, py, pw, ph, 10);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(201,169,110,0.4)';
+  ctx.lineWidth = 1;
+  roundRect(px, py, pw, ph, 10);
+  ctx.stroke();
+
+  // Product name
+  ctx.fillStyle = C.champagne;
+  ctx.font = '600 15px "Playfair Display", serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(p.name, px + pw / 2, py + 30);
+
+  // Brand
+  ctx.fillStyle = 'rgba(180,170,155,0.6)';
+  ctx.font = '300 11px "DM Sans", sans-serif';
+  ctx.fillText(p.brand || 'Zara', px + pw / 2, py + 46);
+
+  // Product image with gold frame
+  const img = productImages[p.id];
+  const imgW = pw - 48, imgH = 240;
+  const imgX = px + 24, imgY = py + 56;
+  // Frame
+  ctx.strokeStyle = 'rgba(201,169,110,0.3)';
+  ctx.lineWidth = 1;
+  roundRect(imgX - 2, imgY - 2, imgW + 4, imgH + 4, 6);
+  ctx.stroke();
+
+  if (img && img.complete && img.naturalWidth > 0) {
+    ctx.save();
+    ctx.beginPath();
+    roundRect(imgX, imgY, imgW, imgH, 4);
+    ctx.clip();
+    const scale = Math.max(imgW / img.naturalWidth, imgH / img.naturalHeight);
+    const sw = img.naturalWidth * scale, sh = img.naturalHeight * scale;
+    ctx.drawImage(img, imgX + (imgW - sw) / 2, imgY + (imgH - sh) / 2, sw, sh);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = p.color;
+    roundRect(imgX, imgY, imgW, imgH, 4);
+    ctx.fill();
+  }
+
+  // Price — elegant gold pill
+  const priceText = '$' + p.price;
+  const priceW = 80;
+  ctx.fillStyle = 'rgba(201,169,110,0.12)';
+  roundRect(px + pw / 2 - priceW / 2, py + imgH + 66, priceW, 22, 11);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(201,169,110,0.4)';
+  ctx.lineWidth = 0.5;
+  roundRect(px + pw / 2 - priceW / 2, py + imgH + 66, priceW, 22, 11);
+  ctx.stroke();
+  ctx.fillStyle = C.gold;
+  ctx.font = '600 14px "DM Sans", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(priceText, px + pw / 2, py + imgH + 82);
+
+  // Buttons
+  const inCart = state.cart.find(c => c.id === p.id);
+  const bw = 120, bh = 34;
+  const addX = px + pw / 2 - bw - 6;
+  const addY = py + ph - 52;
+  const clsX = px + pw / 2 + 6;
+
+  // Add to cart button
+  if (inCart) {
+    ctx.fillStyle = 'rgba(80,75,65,0.6)';
+  } else {
+    const addGrad = ctx.createLinearGradient(addX, addY, addX + bw, addY + bh);
+    addGrad.addColorStop(0, C.gold);
+    addGrad.addColorStop(1, '#a08850');
+    ctx.fillStyle = addGrad;
+  }
+  roundRect(addX, addY, bw, bh, 17);
+  ctx.fill();
+  ctx.fillStyle = inCart ? 'rgba(180,170,155,0.6)' : '#0c0b0a';
+  ctx.font = '600 11px "DM Sans", sans-serif';
+  ctx.fillText(inCart ? 'In Cart' : 'Add to Cart', addX + bw / 2, addY + 21);
+
+  // Close button
+  ctx.fillStyle = 'rgba(60,55,48,0.6)';
+  roundRect(clsX, addY, bw, bh, 17);
+  ctx.fill();
+  ctx.fillStyle = C.champagne;
+  ctx.font = '400 11px "DM Sans", sans-serif';
+  ctx.fillText('Close', clsX + bw / 2, addY + 21);
+}
+
+// Click handler for product popup
+canvas.addEventListener('click', e => {
+  if (!popup) return;
+  const p = popup.product;
+  const pw = 320, ph = 400;
+  const px = (canvas.width - pw) / 2;
+  const py = (canvas.height - ph) / 2;
+  const bw = 120, bh = 36;
+  const addX = px + pw/2 - bw - 5;
+  const addY = py + ph - 52;
+  const clsX = px + pw/2 + 5;
+
+  if (e.clientX >= addX && e.clientX <= addX+bw && e.clientY >= addY && e.clientY <= addY+bh) {
+    // Add to cart
+    if (!state.cart.find(c => c.id === p.id)) {
+      state.cart.push({...p, qty: 1});
+      sfxAddCart();
+      sessionHistory.push({ role: 'user', text: `[CART] Added to cart: ${p.name} ($${p.price})` });
+      // After adding, close popup and trigger Shiro conversation about the addition
+      popup = null;
+      setTimeout(() => {
+        shiroConverse(`I just added ${p.name} ($${p.price}) to my cart. I have ${state.cart.length} item(s) now: ${state.cart.map(i=>i.name).join(', ')}.`);
+      }, 300);
+    }
+    return; // prevent close handler from firing
+  }
+  if (e.clientX >= clsX && e.clientX <= clsX+bw && e.clientY >= addY && e.clientY <= addY+bh) {
+    const prev = popup ? popup._prevPhase || 'shopping' : 'shopping';
+    popup = null;
+    state.phase = (state.room === 'tryon') ? 'tryon' : prev;
+    sfxClick();
+  }
+});
+
+// Also close popup on space
+function closePopupIfOpen() {
+  if (popup) { const prev = popup._prevPhase || 'shopping'; popup = null; state.phase = (state.room === 'tryon') ? 'tryon' : prev; sfxClick(); return true; }
+  return false;
+}
+
+// ============================================================
+// SHIRO CONVERSATION FLOW
+// ============================================================
+let flowRunning = false;
+
+async function handleShiroTalk() {
+  if (flowRunning) return;
+  flowRunning = true;
+
+  let action = 'I want to talk to Shiro.';
+  if (state.room === 'reception' && state.cart.length === 0) {
+    action = shiroMemory.visits === 0 ? 'I just entered the store for the first time.' : 'I returned to the store. This is visit #' + (shiroMemory.visits + 1);
+  } else if (state.room === 'reception' && state.cart.length > 0) {
+    action = 'I came back to reception. I have items in my cart and want to know what to do next.';
+  } else if (state.room === 'upperwear' || state.room === 'lowerwear') {
+    action = `I'm done browsing the ${state.room} section and want to talk to Shiro.`;
+  } else if (state.room === 'tryon') {
+    action = 'I want to discuss my try-on options or checkout.';
+  }
+
+  await shiroConverse(action);
+}
+
+async function shiroConverse(playerAction) {
+  try {
+    dlg = { speaker: 'Shiro ✨', text: '...', displayed: '...', charIdx: 3, timer: 0, options: [], resolve: null, active: true };
+    state.phase = 'dialogue';
+
+    const response = await askShiro(playerAction);
+
+    const options = (response.options || []).map(o => ({ text: o.text, value: o.value }));
+    // Always ensure at least one option so player doesn't get stuck
+    if (options.length === 0) {
+      options.push({ text: 'Continue', value: 'continue' });
+    }
+
+    const choice = await showDialogue('Shiro ✨', response.dialogue, options);
+
+    await handleShiroAction(response.action, choice, response);
+  } catch (e) {
+    console.error('Shiro converse error:', e);
+    state.phase = (state.room === 'tryon') ? 'tryon' : (state.room === 'reception' ? 'free' : 'shopping');
+    flowRunning = false;
+  }
+}
+
+async function handleShiroAction(shiroAction, playerChoice, response) {
+  const navAction = shiroAction || '';
+  const choice = playerChoice || '';
+
+  const goUpper = navAction === 'goto_upperwear' || choice.includes('upper') || choice === 'go_upperwear';
+  const goLower = navAction === 'goto_lowerwear' || choice.includes('lower') || choice === 'go_lowerwear';
+  const goTryon = navAction === 'goto_tryon' || choice.includes('tryon') || choice === 'go_tryon' || choice.includes('try_on');
+  const goReception = navAction === 'goto_reception' || choice.includes('reception') || choice === 'go_reception' || choice === 'go_back';
+  const wantCheckout = choice.includes('checkout') || choice === 'checkout' || choice === 'buy';
+  const wantAvatar = choice.includes('avatar') || choice === 'create_avatar';
+  const wantAdvice = choice.includes('advice') || choice.includes('suggest') || choice.includes('recommend');
+  const wantBrowseMore = choice.includes('browse') || choice === 'continue' || choice === 'keep_shopping';
+  const wantSeePairing = choice.includes('see_pairing') || choice.includes('shiro_pick');
+
+  if (goUpper && state.room === 'reception') {
+    if (!state.visitedRooms.includes('upperwear')) state.visitedRooms.push('upperwear');
+    startWalkToDoor('upper', 'upperwear', () => { state.phase = 'shopping'; flowRunning = false; });
+    return;
+  }
+  if (goLower && state.room === 'reception') {
+    if (!state.visitedRooms.includes('lowerwear')) state.visitedRooms.push('lowerwear');
+    startWalkToDoor('lower', 'lowerwear', () => { state.phase = 'shopping'; flowRunning = false; });
+    return;
+  }
+  if (goTryon && state.room === 'reception') {
+    startWalkToDoor('tryon', 'tryon', () => { state.phase = 'tryon'; flowRunning = false; });
+    return;
+  }
+  if (goReception && state.room !== 'reception') {
+    transitionTo('reception', () => { setupRoom('reception'); state.phase = 'free'; flowRunning = false; });
+    return;
+  }
+  if ((goUpper || goLower) && state.room !== 'reception') {
+    transitionTo('reception', () => {
+      setupRoom('reception');
+      setTimeout(() => {
+        const key = goUpper ? 'upper' : 'lower';
+        const room = goUpper ? 'upperwear' : 'lowerwear';
+        if (!state.visitedRooms.includes(room)) state.visitedRooms.push(room);
+        startWalkToDoor(key, room, () => { state.phase = 'shopping'; flowRunning = false; });
+      }, 300);
+    });
+    return;
+  }
+  if (wantCheckout) {
+    const total = state.cart.reduce((s,i) => s + i.price * i.qty, 0);
+    sfxCheckout();
+    pdata.xp += Math.round(total);
+    shiroMemory.purchaseHistory.push(...state.cart.map(i => ({name: i.name, price: i.price, date: new Date().toISOString()})));
+    let leveled = false;
+    while (pdata.level < 5 && pdata.xp >= LVL[pdata.level+1]) { pdata.level++; leveled = true; }
+    saveData();
+    saveShiroMemory();
+    if (leveled) spawnLevelUpParticles();
+
+    const checkoutAction = `I just purchased: ${state.cart.map(i=>i.name).join(', ')} for $${total.toFixed(2)}. ${leveled ? 'I leveled up to level ' + pdata.level + '!' : ''}`;
+    state.cart = [];
+
+    await shiroConverse(checkoutAction);
+    return;
+  }
+  if (wantAvatar) {
+    await new Promise(resolve => { avatarDoneCallback = resolve; openAvatarCreation(); });
+    avatarDoneCallback = null;
+    await shiroConverse('I just created my avatar for virtual try-on!');
+    return;
+  }
+  if (goTryon && state.room !== 'reception') {
+    transitionTo('reception', () => {
+      setupRoom('reception');
+      setTimeout(() => {
+        startWalkToDoor('tryon', 'tryon', () => { state.phase = 'tryon'; flowRunning = false; });
+      }, 300);
+    });
+    return;
+  }
+
+  // Browse more — just return to shopping in current room
+  if (wantBrowseMore) {
+    state.phase = (state.room === 'tryon') ? 'tryon' : (state.room === 'reception' ? 'free' : 'shopping');
+    flowRunning = false;
+    return;
+  }
+
+  // See pairing — find which room the recommended product is in, navigate there, and auto-open the product popup
+  if (wantSeePairing) {
+    // Extract product name from choice value (e.g. "see_pairing_Barrel Jeans") or from productHighlight
+    let highlight = response.productHighlight || '';
+    if (!highlight && choice.startsWith('see_pairing_')) {
+      highlight = choice.replace('see_pairing_', '').replace(/_/g, ' ');
+    }
+    const inUpper = UPPER_PRODUCTS.find(p => highlight && p.name.toLowerCase().includes(highlight.toLowerCase()));
+    const inLower = LOWER_PRODUCTS.find(p => highlight && p.name.toLowerCase().includes(highlight.toLowerCase()));
+    const targetProduct = inUpper || inLower;
+    const targetRoom = inUpper ? 'upperwear' : inLower ? 'lowerwear' : null;
+
+    function autoOpenProduct() {
+      if (targetProduct) {
+        // Move player near the product and open its popup
+        const prods = targetRoom === 'upperwear' ? UPPER_PRODUCTS : LOWER_PRODUCTS;
+        const ppos = PRODUCT_POS[targetRoom] || [];
+        const idx = prods.indexOf(targetProduct);
+        if (idx >= 0 && ppos[idx]) {
+          player.x = ppos[idx].x;
+          player.y = ppos[idx].y + 1;
+        }
+        setTimeout(() => {
+          showProductPopup(targetProduct);
+        }, 400);
+      } else {
+        state.phase = 'shopping';
+      }
+      flowRunning = false;
+    }
+    
+    if (targetRoom && state.room !== targetRoom) {
+      const goViaReception = state.room !== 'reception';
+      if (goViaReception) {
+        transitionTo('reception', () => {
+          setupRoom('reception');
+          setTimeout(() => {
+            const key = targetRoom === 'upperwear' ? 'upper' : 'lower';
+            if (!state.visitedRooms.includes(targetRoom)) state.visitedRooms.push(targetRoom);
+            startWalkToDoor(key, targetRoom, () => { autoOpenProduct(); });
+          }, 300);
+        });
+      } else {
+        const key = targetRoom === 'upperwear' ? 'upper' : 'lower';
+        if (!state.visitedRooms.includes(targetRoom)) state.visitedRooms.push(targetRoom);
+        startWalkToDoor(key, targetRoom, () => { autoOpenProduct(); });
+      }
+      return;
+    }
+    // Already in the right room — auto-open the product
+    autoOpenProduct();
+    return;
+  }
+
+  if (wantAdvice || choice) {
+    if (!shiroConverse._depth || shiroConverse._depth < 4) {
+      shiroConverse._depth = (shiroConverse._depth || 0) + 1;
+      await shiroConverse(`I chose: "${choice}"`);
+      shiroConverse._depth = 0;
+      return;
+    }
+  }
+
+  // Default — return to free roam
+  state.phase = (state.room === 'tryon') ? 'tryon' : (state.room === 'reception' ? 'free' : 'shopping');
+  flowRunning = false;
+}
+
+// ============================================================
+// DRAWING — ROOMS
+// ============================================================
+function drawFloor(lightColor, darkColor, tintOverlay) {
+  const { ox, oy } = offset();
+  for (let y = 0; y < ROOM_H; y++) {
+    for (let x = 0; x < ROOM_W; x++) {
+      // Marble tile pattern
+      const isLight = (x + y) % 2 === 0;
+      ctx.fillStyle = isLight ? lightColor : darkColor;
+      ctx.fillRect(ox + x * TILE, oy + y * TILE, TILE, TILE);
+      // Subtle veining on light tiles
+      if (isLight) {
+        ctx.save();
+        ctx.globalAlpha = 0.08;
+        ctx.strokeStyle = C.floorVein;
+        ctx.lineWidth = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(ox + x * TILE + 5, oy + y * TILE + TILE * 0.3);
+        ctx.quadraticCurveTo(ox + x * TILE + TILE * 0.5, oy + y * TILE + TILE * 0.6, ox + x * TILE + TILE - 8, oy + y * TILE + TILE * 0.4);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(ox + x * TILE + 10, oy + y * TILE + TILE * 0.7);
+        ctx.quadraticCurveTo(ox + x * TILE + TILE * 0.6, oy + y * TILE + TILE * 0.5, ox + x * TILE + TILE - 3, oy + y * TILE + TILE * 0.8);
+        ctx.stroke();
+        ctx.restore();
+      }
+      // Tile edge (grout line)
+      ctx.strokeStyle = 'rgba(0,0,0,0.06)';
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(ox + x * TILE, oy + y * TILE, TILE, TILE);
+    }
+  }
+  // Room tint overlay
+  if (tintOverlay) {
+    ctx.save();
+    ctx.globalAlpha = 0.04;
+    ctx.fillStyle = tintOverlay;
+    ctx.fillRect(ox, oy, ROOM_W * TILE, ROOM_H * TILE);
+    ctx.restore();
+  }
+}
+
+function drawWalls() {
+  const { ox, oy } = offset();
+  const wallH = TILE;
+  // Dark walnut walls
+  ctx.fillStyle = C.wall;
+  ctx.fillRect(ox, oy - wallH, ROOM_W * TILE, wallH); // top
+  ctx.fillRect(ox - TILE, oy - wallH, TILE, (ROOM_H + 2) * TILE); // left
+  ctx.fillRect(ox + ROOM_W * TILE, oy - wallH, TILE, (ROOM_H + 2) * TILE); // right
+  ctx.fillRect(ox, oy + ROOM_H * TILE, ROOM_W * TILE, TILE); // bottom
+  // Upper wall lighter panel
+  ctx.fillStyle = C.wallTop;
+  ctx.fillRect(ox, oy - wallH, ROOM_W * TILE, wallH / 2);
+  // Gold trim lines
+  ctx.strokeStyle = C.gold;
+  ctx.lineWidth = 1.5;
+  // Top wall gold line (bottom edge)
+  ctx.beginPath();
+  ctx.moveTo(ox, oy); ctx.lineTo(ox + ROOM_W * TILE, oy);
+  ctx.stroke();
+  // Top wall gold line (top edge)
+  ctx.beginPath();
+  ctx.moveTo(ox, oy - wallH); ctx.lineTo(ox + ROOM_W * TILE, oy - wallH);
+  ctx.stroke();
+  // Left wall gold trim
+  ctx.beginPath();
+  ctx.moveTo(ox, oy - wallH); ctx.lineTo(ox, oy + ROOM_H * TILE);
+  ctx.stroke();
+  // Right wall gold trim
+  ctx.beginPath();
+  ctx.moveTo(ox + ROOM_W * TILE, oy - wallH); ctx.lineTo(ox + ROOM_W * TILE, oy + ROOM_H * TILE);
+  ctx.stroke();
+  // Bottom wall gold trim
+  ctx.beginPath();
+  ctx.moveTo(ox, oy + ROOM_H * TILE); ctx.lineTo(ox + ROOM_W * TILE, oy + ROOM_H * TILE);
+  ctx.stroke();
+  // Wainscoting pattern on walls (subtle)
+  ctx.save();
+  ctx.globalAlpha = 0.15;
+  ctx.strokeStyle = C.gold;
+  ctx.lineWidth = 0.5;
+  // Left wall panels
+  for (let i = 0; i < ROOM_H + 1; i++) {
+    const py = oy - wallH + i * TILE;
+    ctx.strokeRect(ox - TILE + 6, py + 6, TILE - 12, TILE - 12);
+  }
+  // Right wall panels
+  for (let i = 0; i < ROOM_H + 1; i++) {
+    const py = oy - wallH + i * TILE;
+    ctx.strokeRect(ox + ROOM_W * TILE + 6, py + 6, TILE - 12, TILE - 12);
+  }
+  ctx.restore();
+}
+
+function drawDoor(tileX, tileY, label) {
+  const { ox, oy } = offset();
+  const dx = ox + tileX * TILE;
+  const dy = oy + tileY * TILE;
+  const dw = TILE + 8;
+  const dh = TILE + 4;
+  const cx = dx + TILE / 2;
+  const near = dist(player.x, player.y, tileX, tileY) < 2.5;
+
+  // Gold glow when near
+  if (near) {
+    ctx.save();
+    const glow = ctx.createRadialGradient(cx, dy + dh / 2, 4, cx, dy + dh / 2, TILE * 1.5);
+    glow.addColorStop(0, 'rgba(201,169,110,0.25)');
+    glow.addColorStop(1, 'rgba(201,169,110,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(dx - TILE, dy - TILE / 2, TILE * 3, TILE * 2);
+    ctx.restore();
+  }
+
+  // Archway shape
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(dx - 4, dy + dh);
+  ctx.lineTo(dx - 4, dy + 10);
+  ctx.arc(cx, dy + 10, dw / 2 + 4, Math.PI, 0);
+  ctx.lineTo(dx + TILE + 4, dy + dh);
+  ctx.closePath();
+  // Gold frame
+  ctx.fillStyle = near ? '#d4b87a' : C.gold;
+  ctx.fill();
+
+  // Inner dark opening
+  ctx.beginPath();
+  ctx.moveTo(dx + 2, dy + dh);
+  ctx.lineTo(dx + 2, dy + 12);
+  ctx.arc(cx, dy + 12, TILE / 2 - 2, Math.PI, 0);
+  ctx.lineTo(dx + TILE - 2, dy + dh);
+  ctx.closePath();
+  ctx.fillStyle = '#0a0806';
+  ctx.fill();
+
+  // Inner subtle gradient
+  const innerGrad = ctx.createLinearGradient(dx, dy, dx, dy + dh);
+  innerGrad.addColorStop(0, 'rgba(201,169,110,0.1)');
+  innerGrad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = innerGrad;
+  ctx.fill();
+  ctx.restore();
+
+  // Label
+  if (label) {
+    ctx.fillStyle = near ? '#d4b87a' : C.gold;
+    ctx.font = '500 10px "DM Sans", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.letterSpacing = '1px';
+    ctx.fillText(label.toUpperCase(), cx, dy - 8);
+  }
+}
+
+function drawReception() {
+  drawFloor(C.floorLight, C.floorDark);
+  drawWalls();
+  const { ox, oy } = offset();
+  const centerX = ox + ROOM_W * TILE / 2;
+
+  // Warm ambient glow
+  ctx.save();
+  const ambientGlow = ctx.createRadialGradient(centerX, oy + ROOM_H * TILE / 2, TILE, centerX, oy + ROOM_H * TILE / 2, ROOM_W * TILE * 0.6);
+  ambientGlow.addColorStop(0, 'rgba(247,231,206,0.06)');
+  ambientGlow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = ambientGlow;
+  ctx.fillRect(ox, oy, ROOM_W * TILE, ROOM_H * TILE);
+  ctx.restore();
+
+  // Store name — elegant serif
+  ctx.fillStyle = C.gold;
+  ctx.font = '700 20px "Playfair Display", serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('CINDERELLA', centerX, oy - TILE + 22);
+  // Thin gold line under name
+  ctx.strokeStyle = C.gold;
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  ctx.moveTo(centerX - 60, oy - TILE + 28);
+  ctx.lineTo(centerX + 60, oy - TILE + 28);
+  ctx.stroke();
+
+  // Chandelier
+  drawChandelier(centerX, oy + TILE * 0.8);
+
+  // Reception counter — curved dark wood with gold edge
+  ctx.save();
+  const ctrX = ox + 4 * TILE;
+  const ctrY = oy + 2.5 * TILE;
+  const ctrW = 6 * TILE;
+  const ctrH = TILE * 1.1;
+  // Counter body
+  ctx.fillStyle = C.counter;
+  ctx.beginPath();
+  ctx.moveTo(ctrX, ctrY + ctrH);
+  ctx.lineTo(ctrX, ctrY + 8);
+  ctx.quadraticCurveTo(ctrX, ctrY, ctrX + 12, ctrY);
+  ctx.lineTo(ctrX + ctrW - 12, ctrY);
+  ctx.quadraticCurveTo(ctrX + ctrW, ctrY, ctrX + ctrW, ctrY + 8);
+  ctx.lineTo(ctrX + ctrW, ctrY + ctrH);
+  ctx.closePath();
+  ctx.fill();
+  // Gold edge on top
+  ctx.strokeStyle = C.gold;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(ctrX, ctrY + 8);
+  ctx.quadraticCurveTo(ctrX, ctrY, ctrX + 12, ctrY);
+  ctx.lineTo(ctrX + ctrW - 12, ctrY);
+  ctx.quadraticCurveTo(ctrX + ctrW, ctrY, ctrX + ctrW, ctrY + 8);
+  ctx.stroke();
+  // Counter surface highlight
+  ctx.fillStyle = 'rgba(201,169,110,0.08)';
+  ctx.fillRect(ctrX + 4, ctrY + 2, ctrW - 8, 6);
+  ctx.restore();
+
+  // Register on counter
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(ox + 6.5 * TILE, oy + 2.6 * TILE, 24, 18);
+  ctx.fillStyle = '#2c3e50';
+  ctx.fillRect(ox + 6.5 * TILE + 2, oy + 2.6 * TILE + 2, 20, 12);
+  ctx.fillStyle = C.gold;
+  ctx.fillRect(ox + 6.5 * TILE + 4, oy + 2.6 * TILE + 4, 16, 8);
+  ctx.globalAlpha = 0.3;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(ox + 6.5 * TILE + 5, oy + 2.6 * TILE + 5, 8, 4);
+  ctx.globalAlpha = 1;
+
+  // Doors
+  drawDoor(DOORS.upper.x, DOORS.upper.y, 'Upperwear');
+  drawDoor(DOORS.lower.x, DOORS.lower.y, 'Lowerwear');
+  drawDoor(DOORS.tryon.x, DOORS.tryon.y, 'Try-On');
+
+  // Fiddle leaf fig plants
+  drawFiddleLeafFig(ox + 2 * TILE + TILE / 2, oy + 1.5 * TILE);
+  drawFiddleLeafFig(ox + 12 * TILE, oy + 1.5 * TILE);
+
+  // Velvet rope decorations (between plants and counter)
+  drawVelvetRope(ox + 3.2 * TILE, oy + 2 * TILE, ox + 3.8 * TILE, oy + 2 * TILE);
+  drawVelvetRope(ox + 10.2 * TILE, oy + 2 * TILE, ox + 10.8 * TILE, oy + 2 * TILE);
+
+  // Welcome mat (elegant)
+  ctx.fillStyle = C.wall;
+  roundRect(ox + 5.5 * TILE, oy + 8.5 * TILE, 3 * TILE, TILE * 0.45, 4);
+  ctx.fill();
+  ctx.strokeStyle = C.gold;
+  ctx.lineWidth = 1;
+  roundRect(ox + 5.5 * TILE, oy + 8.5 * TILE, 3 * TILE, TILE * 0.45, 4);
+  ctx.stroke();
+  ctx.fillStyle = C.champagne;
+  ctx.font = '500 9px "DM Sans", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('WELCOME', ox + 7 * TILE, oy + 8.78 * TILE);
+}
+
+function drawChandelier(cx, cy) {
+  ctx.save();
+  // Main chain
+  ctx.strokeStyle = C.gold;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - 20);
+  ctx.lineTo(cx, cy - 6);
+  ctx.stroke();
+  // Central ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+  ctx.strokeStyle = C.gold;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // Arms with lights
+  const arms = 5;
+  for (let i = 0; i < arms; i++) {
+    const angle = (i / arms) * Math.PI * 2 - Math.PI / 2;
+    const ax = cx + Math.cos(angle) * 20;
+    const ay = cy + Math.sin(angle) * 12;
+    // Arm
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(angle) * 6, cy + Math.sin(angle) * 6);
+    ctx.lineTo(ax, ay);
+    ctx.strokeStyle = C.gold;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // Light bulb glow
+    const lightGlow = ctx.createRadialGradient(ax, ay, 0, ax, ay, 8);
+    lightGlow.addColorStop(0, 'rgba(247,231,206,0.5)');
+    lightGlow.addColorStop(1, 'rgba(247,231,206,0)');
+    ctx.fillStyle = lightGlow;
+    ctx.fillRect(ax - 8, ay - 8, 16, 16);
+    // Light point
+    ctx.fillStyle = C.champagne;
+    ctx.beginPath();
+    ctx.arc(ax, ay, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Center crystal
+  ctx.fillStyle = C.gold;
+  ctx.beginPath();
+  ctx.arc(cx, cy + 8, 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawFiddleLeafFig(px, py) {
+  // Pot
+  ctx.fillStyle = '#3a2e20';
+  ctx.beginPath();
+  ctx.moveTo(px - 7, py + 4);
+  ctx.lineTo(px - 9, py + 16);
+  ctx.lineTo(px + 9, py + 16);
+  ctx.lineTo(px + 7, py + 4);
+  ctx.closePath();
+  ctx.fill();
+  // Pot rim
+  ctx.fillStyle = C.gold;
+  ctx.fillRect(px - 8, py + 3, 16, 2);
+  // Stem
+  ctx.strokeStyle = '#3d5a28';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(px, py + 4);
+  ctx.lineTo(px, py - 8);
+  ctx.stroke();
+  // Large fiddle leaves
+  const leaves = [
+    { ox: -8, oy: -6, sx: 1 },
+    { ox: 6, oy: -10, sx: -1 },
+    { ox: -5, oy: -16, sx: 1 },
+    { ox: 7, oy: -20, sx: -1 },
+    { ox: 0, oy: -24, sx: 1 },
+  ];
+  leaves.forEach(l => {
+    ctx.save();
+    ctx.translate(px + l.ox, py + l.oy);
+    ctx.scale(l.sx, 1);
+    ctx.fillStyle = '#4a7a32';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 6, 9, 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    // Leaf vein
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -7);
+    ctx.lineTo(0, 7);
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+function drawVelvetRope(x1, y1, x2, y2) {
+  // Posts
+  ctx.fillStyle = C.gold;
+  ctx.fillRect(x1 - 2, y1 - 8, 4, 16);
+  ctx.fillRect(x2 - 2, y2 - 8, 4, 16);
+  // Post tops
+  ctx.beginPath(); ctx.arc(x1, y1 - 8, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x2, y2 - 8, 3, 0, Math.PI * 2); ctx.fill();
+  // Rope (catenary curve)
+  ctx.strokeStyle = '#8b2252';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1 - 4);
+  ctx.quadraticCurveTo((x1 + x2) / 2, y1 + 4, x2, y2 - 4);
+  ctx.stroke();
+}
+
+function drawProductRoom(floorLight, floorDark, tint, title, products, positions) {
+  drawFloor(floorLight, floorDark, tint);
+  drawWalls();
+  const { ox, oy } = offset();
+
+  ctx.fillStyle = C.gold;
+  ctx.font = '600 14px "Playfair Display", serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(title, ox + ROOM_W * TILE / 2, oy - TILE + 20);
+  // Thin line under title
+  ctx.strokeStyle = C.gold;
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  ctx.moveTo(ox + ROOM_W * TILE / 2 - 50, oy - TILE + 26);
+  ctx.lineTo(ox + ROOM_W * TILE / 2 + 50, oy - TILE + 26);
+  ctx.stroke();
+
+  // Exit door at bottom
+  drawDoor(7, ROOM_H - 1, 'Exit');
+
+  // Products on elegant display stands
+  products.forEach((p, i) => {
+    if (i >= positions.length) return;
+    const pos = positions[i];
+    const px = ox + pos.x * TILE;
+    const py = oy + pos.y * TILE;
+    const near = dist(player.x, player.y, pos.x, pos.y) < 2;
+    const imgSize = TILE * 1.8;
+    const frameW = imgSize * 0.95;
+    const frameH = imgSize * 1.05;
+    const frameX = px - imgSize * 0.3;
+    const frameY = py - imgSize * 0.35;
+
+    // Subtle glow/spotlight under product display
+    ctx.save();
+    // Floor spotlight pool
+    const floorGlow = ctx.createRadialGradient(px + frameW * 0.2, py + frameH + 8, 0, px + frameW * 0.2, py + frameH + 8, frameW * 0.8);
+    floorGlow.addColorStop(0, 'rgba(247,231,206,0.10)');
+    floorGlow.addColorStop(0.4, 'rgba(201,169,110,0.06)');
+    floorGlow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = floorGlow;
+    ctx.beginPath();
+    ctx.ellipse(px + frameW * 0.2, py + frameH + 8, frameW * 0.7, frameW * 0.25, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Overhead spotlight cone
+    const spotGlow = ctx.createRadialGradient(px + frameW * 0.2, py + frameH * 0.3, 2, px + frameW * 0.2, py + frameH * 0.3, frameW * 0.75);
+    spotGlow.addColorStop(0, 'rgba(247,231,206,0.14)');
+    spotGlow.addColorStop(0.5, 'rgba(247,231,206,0.06)');
+    spotGlow.addColorStop(1, 'rgba(247,231,206,0)');
+    ctx.fillStyle = spotGlow;
+    ctx.fillRect(frameX - 10, frameY - 10, frameW + 20, frameH + 20);
+    ctx.restore();
+
+    // Elegant display frame — dark mat with thin gold border
+    ctx.fillStyle = 'rgba(18,14,10,0.88)';
+    roundRect(frameX, frameY, frameW, frameH, 4);
+    ctx.fill();
+    ctx.strokeStyle = near ? '#d4b87a' : 'rgba(201,169,110,0.5)';
+    ctx.lineWidth = near ? 1.5 : 0.8;
+    roundRect(frameX, frameY, frameW, frameH, 4);
+    ctx.stroke();
+
+    // Inner gold border (mat effect)
+    ctx.strokeStyle = near ? 'rgba(201,169,110,0.6)' : 'rgba(201,169,110,0.2)';
+    ctx.lineWidth = 0.5;
+    roundRect(frameX + 3, frameY + 3, frameW - 6, frameH - 6, 3);
+    ctx.stroke();
+
+    // Product image
+    const img = productImages[p.id];
+    if (img && img.complete && img.naturalWidth > 0) {
+      const iw = imgSize * 0.75;
+      const ih = imgSize * 0.85;
+      ctx.save();
+      ctx.beginPath();
+      const ix = px - iw * 0.28;
+      const iy = py - imgSize * 0.28;
+      roundRect(ix, iy, iw, ih, 3);
+      ctx.clip();
+      ctx.drawImage(img, ix, iy, iw, ih);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = p.color;
+      ctx.fillRect(px - imgSize * 0.15, py - imgSize * 0.2, imgSize * 0.6, imgSize * 0.65);
+    }
+
+    // Gold highlight glow when near
+    if (near) {
+      ctx.save();
+      ctx.shadowColor = C.gold;
+      ctx.shadowBlur = 16;
+      ctx.strokeStyle = C.gold;
+      ctx.lineWidth = 1.5;
+      roundRect(frameX - 1, frameY - 1, frameW + 2, frameH + 2, 5);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Price tag — elegant pill
+    const tagW = 56, tagH = 18;
+    const tagX = px + imgSize * 0.15 - tagW / 2;
+    const tagY = py + imgSize * 0.62;
+    ctx.fillStyle = 'rgba(12,11,10,0.9)';
+    roundRect(tagX, tagY, tagW, tagH, 9);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(201,169,110,0.4)';
+    ctx.lineWidth = 0.5;
+    roundRect(tagX, tagY, tagW, tagH, 9);
+    ctx.stroke();
+    ctx.fillStyle = C.gold;
+    ctx.font = '600 9px "DM Sans", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('$' + p.price, tagX + tagW / 2, tagY + 13);
+
+    // Brand label
+    ctx.fillStyle = 'rgba(180,170,155,0.6)';
+    ctx.font = '300 7px "DM Sans", sans-serif';
+    ctx.fillText(p.brand || 'Zara', tagX + tagW / 2, tagY + tagH + 9);
+
+    // Name label
+    ctx.fillStyle = 'rgba(220,215,205,0.8)';
+    ctx.font = '400 8px "DM Sans", sans-serif';
+    ctx.fillText(p.name.length > 14 ? p.name.slice(0, 13) + '\u2026' : p.name, tagX + tagW / 2, tagY + tagH + 20);
+
+    // "SPACE" hint if near
+    if (near) {
+      ctx.fillStyle = C.gold;
+      ctx.font = '500 9px "DM Sans", sans-serif';
+      ctx.fillText('[SPACE]', px + imgSize * 0.15, py - imgSize * 0.4);
+    }
+  });
+
+  // "Talk to Shiro when done" hint
+  ctx.fillStyle = 'rgba(180,170,155,0.5)';
+  ctx.font = '400 10px "DM Sans", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Talk to Shiro when done browsing', ox + ROOM_W * TILE / 2, oy + ROOM_H * TILE + TILE - 8);
+}
+
+function drawTryOnRoom() {
+  drawFloor(C.floorTryOn, C.floorTryOnDark, '#b76e79');
+  drawWalls();
+  const { ox, oy } = offset();
+
+  // Room title
+  ctx.fillStyle = C.gold;
+  ctx.font = '600 14px "Playfair Display", serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Fitting Room', ox + ROOM_W * TILE / 2, oy - TILE + 20);
+  ctx.strokeStyle = C.gold;
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  ctx.moveTo(ox + ROOM_W * TILE / 2 - 45, oy - TILE + 26);
+  ctx.lineTo(ox + ROOM_W * TILE / 2 + 45, oy - TILE + 26);
+  ctx.stroke();
+
+  drawDoor(7, ROOM_H - 1, 'Exit');
+
+  // Velvet curtains (deep burgundy with gradient curves)
+  drawVelvetCurtain(ox + TILE * 0.6, oy + TILE * 0.5, 3.2 * TILE, true);
+  drawVelvetCurtain(ox + ROOM_W * TILE - TILE * 0.6, oy + TILE * 0.5, 3.2 * TILE, false);
+
+  // Ornate mirror with gold frame
+  const mx = ox + 4 * TILE, my = oy + TILE, mw = 6 * TILE, mh = 3 * TILE;
+  // Outer decorative gold frame
+  ctx.save();
+  ctx.fillStyle = C.gold;
+  roundRect(mx - 8, my - 8, mw + 16, mh + 16, 6);
+  ctx.fill();
+  // Inner frame shadow
+  ctx.fillStyle = '#a08850';
+  roundRect(mx - 4, my - 4, mw + 8, mh + 8, 4);
+  ctx.fill();
+  // Decorative corners
+  const cornerSize = 10;
+  ctx.fillStyle = C.gold;
+  // Top-left scroll
+  ctx.beginPath(); ctx.arc(mx - 4, my - 4, cornerSize, 0, Math.PI * 0.5); ctx.fill();
+  // Top-right scroll
+  ctx.beginPath(); ctx.arc(mx + mw + 4, my - 4, cornerSize, Math.PI * 0.5, Math.PI); ctx.fill();
+  // Bottom-left scroll
+  ctx.beginPath(); ctx.arc(mx - 4, my + mh + 4, cornerSize, -Math.PI * 0.5, 0); ctx.fill();
+  // Bottom-right scroll
+  ctx.beginPath(); ctx.arc(mx + mw + 4, my + mh + 4, cornerSize, Math.PI, Math.PI * 1.5); ctx.fill();
+
+  // Mirror surface
+  const mirrorGrad = ctx.createLinearGradient(mx, my, mx + mw, my + mh);
+  mirrorGrad.addColorStop(0, '#d0dce8');
+  mirrorGrad.addColorStop(0.3, '#e4ecf2');
+  mirrorGrad.addColorStop(0.5, '#eef4f8');
+  mirrorGrad.addColorStop(0.7, '#dce8f0');
+  mirrorGrad.addColorStop(1, '#c4d4e0');
+  ctx.fillStyle = mirrorGrad;
+  roundRect(mx, my, mw, mh, 2);
+  ctx.fill();
+  // Light reflection streak
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  ctx.beginPath();
+  ctx.moveTo(mx + 10, my);
+  ctx.lineTo(mx + 22, my);
+  ctx.lineTo(mx + 10, my + mh - 10);
+  ctx.lineTo(mx + 4, my + mh - 10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // Reflection
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  const rx = mx + mw / 2, ry = my + mh / 2 + 8;
+  drawCharSprite(rx, ry, false, 0, 0);
+  const upper = state.cart.find(c => c.cat === 'upper');
+  const lower = state.cart.find(c => c.cat === 'lower');
+  if (upper) drawProductSprite(rx, ry - 6, upper, 1.3);
+  if (lower) drawProductSprite(rx, ry + 14, lower, 1.3);
+  ctx.restore();
+
+  // Mirror label
+  ctx.fillStyle = 'rgba(201,169,110,0.7)';
+  ctx.font = 'italic 400 10px "DM Sans", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Mirror', mx + mw / 2, my + mh + 24);
+
+  // AI Try-On hint
+  ctx.fillStyle = C.roseGold;
+  ctx.font = '500 10px "DM Sans", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Click a garment below to try it on with Cinderella AI', mx + mw / 2, my + mh + 38);
+
+  // Elegant ottoman/bench in center lower area
+  const benchX = ox + 5.5 * TILE, benchY = oy + 5 * TILE;
+  ctx.fillStyle = '#5a2838';
+  roundRect(benchX, benchY, 3 * TILE, TILE * 0.6, 6);
+  ctx.fill();
+  ctx.strokeStyle = C.gold;
+  ctx.lineWidth = 0.8;
+  roundRect(benchX, benchY, 3 * TILE, TILE * 0.6, 6);
+  ctx.stroke();
+  // Cushion detail
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.fillRect(benchX + 8, benchY + 4, 3 * TILE - 16, TILE * 0.2);
+
+  // Cart list with thumbnails + Try On buttons + clickable item browsing
+  ctx.fillStyle = C.gold;
+  ctx.font = '600 11px "DM Sans", sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('Your Outfit', ox + 9 * TILE, oy + 5.2 * TILE);
+  state._tryOnBtns = [];
+  state._cartItemBtns = [];
+  state.cart.forEach((item, i) => {
+    const iy = oy + 5.5 * TILE + i * 62;
+
+    // Clickable thumbnail region (for browsing item details)
+    const thumbX = ox + 9 * TILE, thumbY = iy, thumbW = 44, thumbH = 44;
+    const thumbHover = mouseX >= thumbX && mouseX <= thumbX + thumbW && mouseY >= thumbY && mouseY <= thumbY + thumbH;
+
+    // Thumbnail with border
+    const img = productImages[item.id];
+    if (img && img.complete && img.naturalWidth > 0) {
+      ctx.save();
+      ctx.beginPath();
+      roundRect(thumbX, thumbY, thumbW, thumbH, 4);
+      ctx.clip();
+      ctx.drawImage(img, thumbX, thumbY, thumbW, thumbH);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = item.color;
+      roundRect(thumbX, thumbY, thumbW, thumbH, 4);
+      ctx.fill();
+    }
+    // Hover glow on thumbnail
+    ctx.strokeStyle = thumbHover ? C.gold : 'rgba(201,169,110,0.3)';
+    ctx.lineWidth = thumbHover ? 1.5 : 0.5;
+    roundRect(thumbX, thumbY, thumbW, thumbH, 4);
+    ctx.stroke();
+    if (thumbHover) {
+      ctx.save();
+      ctx.shadowColor = C.gold;
+      ctx.shadowBlur = 8;
+      ctx.strokeStyle = 'rgba(201,169,110,0.5)';
+      ctx.lineWidth = 1;
+      roundRect(thumbX, thumbY, thumbW, thumbH, 4);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Clickable item name region
+    const nameX = ox + 9 * TILE + 50, nameY = iy, nameW = 100, nameH = 30;
+    const nameHover = mouseX >= nameX && mouseX <= nameX + nameW && mouseY >= nameY && mouseY <= nameY + nameH;
+
+    ctx.fillStyle = nameHover ? C.gold : '#fff';
+    ctx.font = '500 10px "DM Sans", sans-serif';
+    ctx.textAlign = 'left';
+    const shortName = item.name.length > 14 ? item.name.slice(0, 13) + '\u2026' : item.name;
+    ctx.fillText(shortName, nameX, iy + 14);
+    ctx.fillStyle = 'rgba(180,170,155,0.7)';
+    ctx.font = '300 9px "DM Sans", sans-serif';
+    ctx.fillText('$' + item.price + ' \u00B7 ' + (item.brand || 'Zara'), nameX, iy + 27);
+
+    // Store combined clickable region for thumbnail + name (browse details)
+    state._cartItemBtns.push({ x: thumbX, y: thumbY, w: thumbW, h: thumbH, item });
+    state._cartItemBtns.push({ x: nameX, y: nameY, w: nameW, h: nameH, item });
+
+    // "Try On" button — gold gradient pill
+    const btnX = ox + 9 * TILE + 50;
+    const btnY = iy + 32;
+    const btnW = 72, btnH = 20;
+    const hover = mouseX >= btnX && mouseX <= btnX + btnW && mouseY >= btnY && mouseY <= btnY + btnH;
+    const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX + btnW, btnY + btnH);
+    if (hover) {
+      btnGrad.addColorStop(0, '#d4b87a');
+      btnGrad.addColorStop(1, '#c9a96e');
+    } else {
+      btnGrad.addColorStop(0, C.gold);
+      btnGrad.addColorStop(1, '#a08850');
+    }
+    ctx.fillStyle = btnGrad;
+    roundRect(btnX, btnY, btnW, btnH, 10);
+    ctx.fill();
+    ctx.fillStyle = '#0c0b0a';
+    ctx.font = '600 9px "DM Sans", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Try On', btnX + btnW / 2, btnY + 14);
+
+    state._tryOnBtns.push({ x: btnX, y: btnY, w: btnW, h: btnH, item });
+  });
+
+  // "Try Entire Outfit" button (if 2+ items in cart)
+  let nextBtnY = oy + 5.5 * TILE + state.cart.length * 62 + 8;
+  if (state.cart.length >= 2) {
+    const allBtnW = 160, allBtnH = 28;
+    const allBtnX = ox + 9 * TILE;
+    const allBtnY = nextBtnY;
+    const allHover = mouseX >= allBtnX && mouseX <= allBtnX + allBtnW && mouseY >= allBtnY && mouseY <= allBtnY + allBtnH;
+
+    const allGrad = ctx.createLinearGradient(allBtnX, allBtnY, allBtnX + allBtnW, allBtnY + allBtnH);
+    allGrad.addColorStop(0, allHover ? '#d4b87a' : C.gold);
+    allGrad.addColorStop(1, allHover ? '#c9a96e' : '#a08850');
+    ctx.fillStyle = allGrad;
+    roundRect(allBtnX, allBtnY, allBtnW, allBtnH, 12);
+    ctx.fill();
+    ctx.fillStyle = '#0c0b0a';
+    ctx.font = '600 11px "DM Sans", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('\u2728 Try Entire Outfit', allBtnX + allBtnW / 2, allBtnY + 19);
+
+    state._tryAllBtn = { x: allBtnX, y: allBtnY, w: allBtnW, h: allBtnH };
+    nextBtnY = allBtnY + allBtnH + 10;
+  } else {
+    state._tryAllBtn = null;
+  }
+
+  // "Continue Shopping" + "Checkout" buttons — side by side
+  {
+    const csBtnW = 140, coBtnW = 120, csBtnH = 26, gap = 10;
+    const totalW = csBtnW + gap + coBtnW;
+    const csBtnX = ox + 9 * TILE;
+    const csBtnY = nextBtnY + 4;
+    const csHover = mouseX >= csBtnX && mouseX <= csBtnX + csBtnW && mouseY >= csBtnY && mouseY <= csBtnY + csBtnH;
+    ctx.fillStyle = csHover ? 'rgba(201,169,110,0.25)' : 'rgba(201,169,110,0.1)';
+    roundRect(csBtnX, csBtnY, csBtnW, csBtnH, 12);
+    ctx.fill();
+    ctx.strokeStyle = csHover ? C.gold : 'rgba(201,169,110,0.35)';
+    ctx.lineWidth = csHover ? 1 : 0.5;
+    roundRect(csBtnX, csBtnY, csBtnW, csBtnH, 12);
+    ctx.stroke();
+    ctx.fillStyle = csHover ? C.gold : C.champagne;
+    ctx.font = '500 10px "DM Sans", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('\u2190 Continue Shopping', csBtnX + csBtnW / 2, csBtnY + 17);
+    state._continueShoppingBtn = { x: csBtnX, y: csBtnY, w: csBtnW, h: csBtnH };
+
+    // Checkout button (gold, only if cart has items)
+    if (state.cart.length > 0) {
+      const coBtnX = csBtnX + csBtnW + gap;
+      const coHover = mouseX >= coBtnX && mouseX <= coBtnX + coBtnW && mouseY >= csBtnY && mouseY <= csBtnY + csBtnH;
+      const coGrad = ctx.createLinearGradient(coBtnX, csBtnY, coBtnX + coBtnW, csBtnY + csBtnH);
+      coGrad.addColorStop(0, coHover ? '#ffe040' : '#ffd700');
+      coGrad.addColorStop(1, coHover ? '#ffaa00' : '#ff8c00');
+      ctx.fillStyle = coGrad;
+      roundRect(coBtnX, csBtnY, coBtnW, csBtnH, 12);
+      ctx.fill();
+      ctx.fillStyle = '#1a1a2e';
+      ctx.font = '600 10px "DM Sans", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('\ud83d\udcb3 Checkout', coBtnX + coBtnW / 2, csBtnY + 17);
+      state._checkoutBtn = { x: coBtnX, y: csBtnY, w: coBtnW, h: csBtnH };
+    } else {
+      state._checkoutBtn = null;
+    }
+  }
+}
+
+function drawVelvetCurtain(x, y, height, isLeft) {
+  ctx.save();
+  const curtainW = TILE * 0.8;
+  // Main curtain body with gradient
+  const grad = ctx.createLinearGradient(isLeft ? x : x - curtainW, y, isLeft ? x + curtainW : x, y);
+  grad.addColorStop(0, isLeft ? '#6b1a2a' : '#8b2238');
+  grad.addColorStop(0.5, '#8b2238');
+  grad.addColorStop(1, isLeft ? '#8b2238' : '#6b1a2a');
+  ctx.fillStyle = grad;
+  // Curved shape
+  ctx.beginPath();
+  if (isLeft) {
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(x + curtainW * 1.3, y + height * 0.3, x + curtainW * 0.6, y + height);
+    ctx.lineTo(x, y + height);
+    ctx.closePath();
+  } else {
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(x - curtainW * 1.3, y + height * 0.3, x - curtainW * 0.6, y + height);
+    ctx.lineTo(x, y + height);
+    ctx.closePath();
+  }
+  ctx.fill();
+  // Fold lines
+  ctx.strokeStyle = 'rgba(100,20,40,0.4)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 3; i++) {
+    ctx.beginPath();
+    const foldX = isLeft ? x + i * curtainW * 0.2 : x - i * curtainW * 0.2;
+    ctx.moveTo(foldX, y + 4);
+    ctx.lineTo(foldX + (isLeft ? 2 : -2), y + height - 4);
+    ctx.stroke();
+  }
+  // Gold tieback
+  ctx.fillStyle = C.gold;
+  const tieY = y + height * 0.35;
+  ctx.beginPath();
+  ctx.arc(isLeft ? x + curtainW * 0.5 : x - curtainW * 0.5, tieY, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// ============================================================
+// DRAW CHARACTERS
+// ============================================================
+function drawCharSprite(cx, cy, isShiro, dir, frame, bob=0) {
+  const y = cy + bob;
+  const s = TILE * 1.4;
+  const hw = s * 0.28;
+  const breathe = Math.sin(Date.now() / 800) * 0.5;
+  const t = Date.now();
+
+  // Rich shadow under character — elongated, slightly offset
+  ctx.save();
+  const shadowGrad = ctx.createRadialGradient(cx + 2, y + s * 0.34, 0, cx + 2, y + s * 0.34, hw * 1.6);
+  shadowGrad.addColorStop(0, 'rgba(0,0,0,0.3)');
+  shadowGrad.addColorStop(0.5, 'rgba(0,0,0,0.12)');
+  shadowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = shadowGrad;
+  ctx.beginPath();
+  ctx.ellipse(cx + 2, y + s * 0.34, hw * 1.4, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  if (isShiro) {
+    // === SHIRO — Fitted dark suit with gold pocket square, richer detail ===
+    const legAnim = 0;
+
+    // Shoes — polished Oxford style
+    ctx.fillStyle = '#0f0e0c';
+    roundRect(cx - hw * 0.58, y + s * 0.26, hw * 0.48, 7, 3);
+    ctx.fill();
+    roundRect(cx + hw * 0.08, y + s * 0.26, hw * 0.48, 7, 3);
+    ctx.fill();
+    // Shoe shine highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(cx - hw * 0.52, y + s * 0.265, hw * 0.2, 2);
+    ctx.fillRect(cx + hw * 0.14, y + s * 0.265, hw * 0.2, 2);
+
+    // Legs (tailored dark trousers with crease)
+    ctx.fillStyle = '#1a1a1e';
+    ctx.fillRect(cx - hw * 0.5, y + s * 0.08, hw * 0.38, s * 0.2);
+    ctx.fillRect(cx + hw * 0.12, y + s * 0.08, hw * 0.38, s * 0.2);
+    // Trouser crease
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(cx - hw * 0.31, y + s * 0.09);
+    ctx.lineTo(cx - hw * 0.31, y + s * 0.27);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx + hw * 0.31, y + s * 0.09);
+    ctx.lineTo(cx + hw * 0.31, y + s * 0.27);
+    ctx.stroke();
+
+    // Body — dark fitted suit jacket with lapels
+    const jacketGrad = ctx.createLinearGradient(cx - hw, y - s * 0.2, cx + hw, y + s * 0.1);
+    jacketGrad.addColorStop(0, '#1c1c22');
+    jacketGrad.addColorStop(1, '#18181e');
+    ctx.fillStyle = jacketGrad;
+    ctx.beginPath();
+    ctx.moveTo(cx - hw * 0.6, y + s * 0.1);
+    ctx.lineTo(cx - hw * 0.72, y - s * 0.18 + breathe);
+    ctx.quadraticCurveTo(cx, y - s * 0.22 + breathe, cx + hw * 0.72, y - s * 0.18 + breathe);
+    ctx.lineTo(cx + hw * 0.6, y + s * 0.1);
+    ctx.closePath();
+    ctx.fill();
+
+    // Lapel detail
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    ctx.moveTo(cx - hw * 0.15, y - s * 0.18 + breathe);
+    ctx.lineTo(cx - hw * 0.4, y - s * 0.05 + breathe);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx + hw * 0.15, y - s * 0.18 + breathe);
+    ctx.lineTo(cx + hw * 0.4, y - s * 0.05 + breathe);
+    ctx.stroke();
+
+    // Shirt collar V (visible at neck)
+    ctx.fillStyle = '#f0ece2';
+    ctx.beginPath();
+    ctx.moveTo(cx - hw * 0.22, y - s * 0.18 + breathe);
+    ctx.lineTo(cx, y - s * 0.12 + breathe);
+    ctx.lineTo(cx + hw * 0.22, y - s * 0.18 + breathe);
+    ctx.closePath();
+    ctx.fill();
+    // Shirt collar points
+    ctx.fillStyle = '#e8e0d4';
+    ctx.beginPath();
+    ctx.moveTo(cx - hw * 0.22, y - s * 0.185 + breathe);
+    ctx.lineTo(cx - hw * 0.32, y - s * 0.16 + breathe);
+    ctx.lineTo(cx - hw * 0.18, y - s * 0.16 + breathe);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(cx + hw * 0.22, y - s * 0.185 + breathe);
+    ctx.lineTo(cx + hw * 0.32, y - s * 0.16 + breathe);
+    ctx.lineTo(cx + hw * 0.18, y - s * 0.16 + breathe);
+    ctx.closePath();
+    ctx.fill();
+
+    // Gold pocket square with folded peaks
+    ctx.fillStyle = C.gold;
+    ctx.fillRect(cx + hw * 0.2, y - s * 0.12, 6, 5);
+    ctx.beginPath();
+    ctx.moveTo(cx + hw * 0.2, y - s * 0.12);
+    ctx.lineTo(cx + hw * 0.2 + 1.5, y - s * 0.12 - 4);
+    ctx.lineTo(cx + hw * 0.2 + 3, y - s * 0.12 - 2);
+    ctx.lineTo(cx + hw * 0.2 + 4.5, y - s * 0.12 - 4.5);
+    ctx.lineTo(cx + hw * 0.2 + 6, y - s * 0.12);
+    ctx.fill();
+
+    // Button detail on jacket
+    ctx.fillStyle = 'rgba(201,169,110,0.4)';
+    ctx.beginPath(); ctx.arc(cx, y - s * 0.06 + breathe, 1.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, y + s * 0.01 + breathe, 1.2, 0, Math.PI * 2); ctx.fill();
+
+    // Arms
+    ctx.fillStyle = '#1c1c22';
+    // Left arm
+    ctx.beginPath();
+    ctx.moveTo(cx - hw * 0.68, y - s * 0.16 + breathe);
+    ctx.quadraticCurveTo(cx - hw * 0.82, y - s * 0.02, cx - hw * 0.7, y + s * 0.08);
+    ctx.lineTo(cx - hw * 0.55, y + s * 0.08);
+    ctx.quadraticCurveTo(cx - hw * 0.6, y - s * 0.02, cx - hw * 0.55, y - s * 0.13 + breathe);
+    ctx.closePath();
+    ctx.fill();
+    // Right arm
+    ctx.beginPath();
+    ctx.moveTo(cx + hw * 0.68, y - s * 0.16 + breathe);
+    ctx.quadraticCurveTo(cx + hw * 0.82, y - s * 0.02, cx + hw * 0.7, y + s * 0.08);
+    ctx.lineTo(cx + hw * 0.55, y + s * 0.08);
+    ctx.quadraticCurveTo(cx + hw * 0.6, y - s * 0.02, cx + hw * 0.55, y - s * 0.13 + breathe);
+    ctx.closePath();
+    ctx.fill();
+    // Hands
+    ctx.fillStyle = '#e8c8a0';
+    ctx.beginPath(); ctx.arc(cx - hw * 0.65, y + s * 0.1, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + hw * 0.65, y + s * 0.1, 3, 0, Math.PI * 2); ctx.fill();
+
+    // Neck
+    ctx.fillStyle = '#e8c8a0';
+    ctx.fillRect(cx - 3.5, y - s * 0.22, 7, 7);
+
+    // Head (well proportioned)
+    ctx.fillStyle = '#e8c8a0';
+    ctx.beginPath();
+    ctx.ellipse(cx, y - s * 0.29, hw * 0.54, hw * 0.60, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Jaw definition
+    ctx.fillStyle = 'rgba(200,170,130,0.3)';
+    ctx.beginPath();
+    ctx.ellipse(cx, y - s * 0.22, hw * 0.42, hw * 0.15, 0, 0, Math.PI);
+    ctx.fill();
+
+    // Ears
+    ctx.fillStyle = '#dbb890';
+    ctx.beginPath(); ctx.ellipse(cx - hw * 0.52, y - s * 0.28, 2.5, 4, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + hw * 0.52, y - s * 0.28, 2.5, 4, 0, 0, Math.PI * 2); ctx.fill();
+
+    // Hair — styled, swept back with volume
+    ctx.fillStyle = '#1a1a22';
+    ctx.beginPath();
+    ctx.ellipse(cx, y - s * 0.35, hw * 0.58, hw * 0.38, 0, Math.PI * 0.85, Math.PI * 2.15);
+    ctx.fill();
+    // Hair volume on top
+    ctx.beginPath();
+    ctx.ellipse(cx - 2, y - s * 0.38, hw * 0.4, hw * 0.18, -0.2, 0, Math.PI * 2);
+    ctx.fill();
+    // Side hair
+    ctx.fillRect(cx - hw * 0.53, y - s * 0.34, 3, hw * 0.35);
+    ctx.fillRect(cx + hw * 0.53 - 3, y - s * 0.34, 3, hw * 0.35);
+
+    // Eyebrows
+    ctx.strokeStyle = '#1a1a22';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(cx - hw * 0.28, y - s * 0.32);
+    ctx.quadraticCurveTo(cx - hw * 0.18, y - s * 0.34, cx - hw * 0.08, y - s * 0.32);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx + hw * 0.08, y - s * 0.32);
+    ctx.quadraticCurveTo(cx + hw * 0.18, y - s * 0.34, cx + hw * 0.28, y - s * 0.32);
+    ctx.stroke();
+
+    // Eyes — almond shaped
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.ellipse(cx - hw * 0.18, y - s * 0.285, 3, 2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + hw * 0.18, y - s * 0.285, 3, 2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#2c3e50';
+    ctx.beginPath(); ctx.arc(cx - hw * 0.18, y - s * 0.285, 1.8, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + hw * 0.18, y - s * 0.285, 1.8, 0, Math.PI * 2); ctx.fill();
+    // Pupil
+    ctx.fillStyle = '#111';
+    ctx.beginPath(); ctx.arc(cx - hw * 0.17, y - s * 0.285, 0.9, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + hw * 0.17, y - s * 0.285, 0.9, 0, Math.PI * 2); ctx.fill();
+    // Eye shine
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(cx - hw * 0.19 + 0.8, y - s * 0.295, 0.9, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + hw * 0.19 + 0.8, y - s * 0.295, 0.9, 0, Math.PI * 2); ctx.fill();
+
+    // Nose
+    ctx.strokeStyle = 'rgba(180,140,100,0.3)';
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    ctx.moveTo(cx, y - s * 0.28);
+    ctx.lineTo(cx - 1.5, y - s * 0.24);
+    ctx.stroke();
+
+    // Subtle smile
+    ctx.strokeStyle = '#b07060';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.arc(cx, y - s * 0.23, hw * 0.12, 0.15, Math.PI - 0.15);
+    ctx.stroke();
+
+    // Name — elegant gold tag
+    ctx.fillStyle = 'rgba(12,11,10,0.6)';
+    roundRect(cx - 20, y - s * 0.50, 40, 14, 7);
+    ctx.fill();
+    ctx.fillStyle = C.gold;
+    ctx.font = '500 9px "DM Sans", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Shiro', cx, y - s * 0.42);
+  } else {
+    // === PLAYER — Casual-chic outfit with richer detail ===
+    const legAnim = player.moving ? Math.sin(frame * 0.25) * 5 : 0;
+    const armSwing = player.moving ? Math.sin(frame * 0.25) * 3 : 0;
+
+    // Shoes — stylish sneakers
+    ctx.fillStyle = '#f0ece2';
+    roundRect(cx - hw * 0.58, y + s * 0.26 + legAnim, hw * 0.48, 7, 3);
+    ctx.fill();
+    roundRect(cx + hw * 0.08, y + s * 0.26 - legAnim, hw * 0.48, 7, 3);
+    ctx.fill();
+    // Shoe sole accent
+    ctx.fillStyle = 'rgba(201,169,110,0.4)';
+    ctx.fillRect(cx - hw * 0.56, y + s * 0.29 + legAnim, hw * 0.44, 2);
+    ctx.fillRect(cx + hw * 0.1, y + s * 0.29 - legAnim, hw * 0.44, 2);
+
+    // Legs (nice fitted pants with subtle detail)
+    const pantsGrad = ctx.createLinearGradient(cx - hw, y + s * 0.08, cx + hw, y + s * 0.28);
+    pantsGrad.addColorStop(0, '#2a2a32');
+    pantsGrad.addColorStop(1, '#22222a');
+    ctx.fillStyle = pantsGrad;
+    ctx.fillRect(cx - hw * 0.5, y + s * 0.08 + legAnim, hw * 0.38, s * 0.2);
+    ctx.fillRect(cx + hw * 0.12, y + s * 0.08 - legAnim, hw * 0.38, s * 0.2);
+
+    // Body — fitted casual top with gradient
+    const topGrad = ctx.createLinearGradient(cx - hw, y - s * 0.2, cx + hw, y + s * 0.1);
+    topGrad.addColorStop(0, '#e8d5d0');
+    topGrad.addColorStop(0.5, '#e0cbc5');
+    topGrad.addColorStop(1, '#d4b8b0');
+    ctx.fillStyle = topGrad;
+    ctx.beginPath();
+    ctx.moveTo(cx - hw * 0.6, y + s * 0.1);
+    ctx.lineTo(cx - hw * 0.68, y - s * 0.16 + breathe);
+    ctx.quadraticCurveTo(cx, y - s * 0.21 + breathe, cx + hw * 0.68, y - s * 0.16 + breathe);
+    ctx.lineTo(cx + hw * 0.6, y + s * 0.1);
+    ctx.closePath();
+    ctx.fill();
+
+    // Neckline detail (scoop neck)
+    ctx.strokeStyle = 'rgba(180,150,140,0.4)';
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    ctx.arc(cx, y - s * 0.16 + breathe, hw * 0.18, Math.PI * 0.15, Math.PI * 0.85);
+    ctx.stroke();
+
+    // Arms
+    ctx.fillStyle = '#e0cbc5';
+    // Left arm
+    ctx.beginPath();
+    ctx.moveTo(cx - hw * 0.64, y - s * 0.14 + breathe);
+    ctx.quadraticCurveTo(cx - hw * 0.78, y + armSwing, cx - hw * 0.68, y + s * 0.08 + armSwing);
+    ctx.lineTo(cx - hw * 0.52, y + s * 0.08 + armSwing);
+    ctx.quadraticCurveTo(cx - hw * 0.56, y, cx - hw * 0.52, y - s * 0.12 + breathe);
+    ctx.closePath();
+    ctx.fill();
+    // Right arm
+    ctx.beginPath();
+    ctx.moveTo(cx + hw * 0.64, y - s * 0.14 + breathe);
+    ctx.quadraticCurveTo(cx + hw * 0.78, y - armSwing, cx + hw * 0.68, y + s * 0.08 - armSwing);
+    ctx.lineTo(cx + hw * 0.52, y + s * 0.08 - armSwing);
+    ctx.quadraticCurveTo(cx + hw * 0.56, y, cx + hw * 0.52, y - s * 0.12 + breathe);
+    ctx.closePath();
+    ctx.fill();
+    // Hands
+    ctx.fillStyle = '#e8c8a0';
+    ctx.beginPath(); ctx.arc(cx - hw * 0.63, y + s * 0.1 + armSwing, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + hw * 0.63, y + s * 0.1 - armSwing, 3, 0, Math.PI * 2); ctx.fill();
+
+    // Neck
+    ctx.fillStyle = '#e8c8a0';
+    ctx.fillRect(cx - 3.5, y - s * 0.20, 7, 6);
+
+    // Head
+    ctx.fillStyle = '#e8c8a0';
+    ctx.beginPath();
+    ctx.ellipse(cx, y - s * 0.27, hw * 0.52, hw * 0.58, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Ears
+    ctx.fillStyle = '#dbb890';
+    ctx.beginPath(); ctx.ellipse(cx - hw * 0.50, y - s * 0.27, 2.5, 3.5, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + hw * 0.50, y - s * 0.27, 2.5, 3.5, 0, 0, Math.PI * 2); ctx.fill();
+
+    // Hair — styled with volume and bangs
+    ctx.fillStyle = '#5a3520';
+    ctx.beginPath();
+    ctx.ellipse(cx + 1, y - s * 0.34, hw * 0.58, hw * 0.42, -0.1, Math.PI * 0.65, Math.PI * 2.35);
+    ctx.fill();
+    // Hair volume/body
+    ctx.beginPath();
+    ctx.ellipse(cx + 2, y - s * 0.37, hw * 0.42, hw * 0.2, -0.15, 0, Math.PI * 2);
+    ctx.fill();
+    // Side wisps / bangs
+    ctx.beginPath();
+    ctx.ellipse(cx - hw * 0.32, y - s * 0.26, 4.5, 8, 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    // Right side wisp
+    ctx.beginPath();
+    ctx.ellipse(cx + hw * 0.35, y - s * 0.28, 3, 5, -0.2, 0, Math.PI * 2);
+    ctx.fill();
+    // Hair highlight
+    ctx.save();
+    ctx.globalAlpha = 0.15;
+    ctx.fillStyle = '#8b6040';
+    ctx.beginPath();
+    ctx.ellipse(cx - 3, y - s * 0.36, hw * 0.2, hw * 0.12, 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Eyebrows
+    ctx.strokeStyle = '#4a2a15';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx - hw * 0.28, y - s * 0.31);
+    ctx.quadraticCurveTo(cx - hw * 0.18, y - s * 0.325, cx - hw * 0.08, y - s * 0.31);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx + hw * 0.08, y - s * 0.31);
+    ctx.quadraticCurveTo(cx + hw * 0.18, y - s * 0.325, cx + hw * 0.28, y - s * 0.31);
+    ctx.stroke();
+
+    // Eyes — expressive
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.ellipse(cx - hw * 0.18, y - s * 0.27, 3, 2.2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + hw * 0.18, y - s * 0.27, 3, 2.2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#3a5a4a';
+    ctx.beginPath(); ctx.arc(cx - hw * 0.18, y - s * 0.27, 1.8, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + hw * 0.18, y - s * 0.27, 1.8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1a2a20';
+    ctx.beginPath(); ctx.arc(cx - hw * 0.17, y - s * 0.27, 0.9, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + hw * 0.17, y - s * 0.27, 0.9, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(cx - hw * 0.19 + 0.8, y - s * 0.28, 0.9, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + hw * 0.19 + 0.8, y - s * 0.28, 0.9, 0, Math.PI * 2); ctx.fill();
+
+    // Nose
+    ctx.strokeStyle = 'rgba(180,140,100,0.25)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(cx, y - s * 0.27);
+    ctx.lineTo(cx - 1, y - s * 0.235);
+    ctx.stroke();
+
+    // Subtle smile
+    ctx.strokeStyle = '#c08070';
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.arc(cx, y - s * 0.225, hw * 0.1, 0.2, Math.PI - 0.2);
+    ctx.stroke();
+
+    // Name
+    ctx.fillStyle = 'rgba(12,11,10,0.5)';
+    roundRect(cx - 14, y - s * 0.48, 28, 14, 7);
+    ctx.fill();
+    ctx.fillStyle = '#f0ece2';
+    ctx.font = '500 9px "DM Sans", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('You', cx, y - s * 0.40);
+  }
+}
+
+// ============================================================
+// PRODUCT SPRITES
+// ============================================================
+function drawProductSprite(px, py, product, scale) {
+  const s = 12 * scale;
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.fillStyle = product.color;
+  switch(product.type) {
+    case 'shirt':
+      ctx.fillRect(-s, -s*0.7, s*2, s*1.3);
+      ctx.fillRect(-s*1.3, -s*0.5, s*0.5, s*0.8);
+      ctx.fillRect(s*0.8, -s*0.5, s*0.5, s*0.8);
+      break;
+    case 'jacket':
+      ctx.fillRect(-s, -s*0.7, s*2, s*1.5);
+      ctx.fillRect(-s*1.4, -s*0.5, s*0.6, s*1.1);
+      ctx.fillRect(s*0.8, -s*0.5, s*0.6, s*1.1);
+      ctx.fillStyle = '#ccc'; ctx.fillRect(-1, -s*0.5, 2, s*1.3);
+      break;
+    case 'coat':
+      ctx.fillRect(-s*1.1, -s*0.8, s*2.2, s*1.7);
+      ctx.fillRect(-s*1.5, -s*0.6, s*0.6, s*1.2);
+      ctx.fillRect(s*0.9, -s*0.6, s*0.6, s*1.2);
+      ctx.fillStyle = '#d4a574'; ctx.fillRect(-s*0.5, -s*0.95, s, s*0.18);
+      break;
+    case 'polo':
+      ctx.fillRect(-s*0.8, -s*0.6, s*1.6, s*1.1);
+      ctx.fillRect(-s*1.1, -s*0.4, s*0.5, s*0.7);
+      ctx.fillRect(s*0.6, -s*0.4, s*0.5, s*0.7);
+      ctx.fillStyle = shade(product.color, -25); ctx.fillRect(-s*0.4, -s*0.8, s*0.8, s*0.2);
+      break;
+    case 'hoodie':
+      ctx.fillRect(-s, -s*0.7, s*2, s*1.4);
+      ctx.fillRect(-s*1.3, -s*0.4, s*0.5, s*1);
+      ctx.fillRect(s*0.8, -s*0.4, s*0.5, s*1);
+      ctx.fillStyle = shade(product.color, -15);
+      ctx.beginPath(); ctx.arc(0, -s*0.65, s*0.55, Math.PI, Math.PI*2); ctx.fill();
+      break;
+    case 'jeans':
+      ctx.fillRect(-s*0.6, -s*0.7, s*1.2, s*0.8);
+      ctx.fillRect(-s*0.6, 0, s*0.45, s*0.9);
+      ctx.fillRect(s*0.15, 0, s*0.45, s*0.9);
+      break;
+    case 'skirt':
+      ctx.fillRect(-s*0.4, -s*0.6, s*0.8, s*0.25);
+      ctx.beginPath();
+      ctx.moveTo(-s*0.4, -s*0.35); ctx.lineTo(-s*0.8, s*0.7);
+      ctx.lineTo(s*0.8, s*0.7); ctx.lineTo(s*0.4, -s*0.35);
+      ctx.fill();
+      break;
+    case 'shorts':
+      ctx.fillRect(-s*0.6, -s*0.5, s*1.2, s*0.45);
+      ctx.fillRect(-s*0.6, -s*0.05, s*0.5, s*0.4);
+      ctx.fillRect(s*0.1, -s*0.05, s*0.5, s*0.4);
+      break;
+    case 'chinos':
+      ctx.fillRect(-s*0.55, -s*0.7, s*1.1, s*0.75);
+      ctx.fillRect(-s*0.55, 0, s*0.45, s*0.95);
+      ctx.fillRect(s*0.1, 0, s*0.45, s*0.95);
+      break;
+    case 'joggers':
+      ctx.fillRect(-s*0.6, -s*0.7, s*1.2, s*0.75);
+      ctx.fillRect(-s*0.55, 0, s*0.45, s*0.85);
+      ctx.fillRect(s*0.1, 0, s*0.45, s*0.85);
+      ctx.fillStyle = shade(product.color, -20);
+      ctx.fillRect(-s*0.5, s*0.7, s*0.35, s*0.12);
+      ctx.fillRect(s*0.15, s*0.7, s*0.35, s*0.12);
+      break;
+  }
+  ctx.restore();
+}
+
+// ============================================================
+// UI OVERLAY (drawn on canvas)
+// ============================================================
+function drawUI() {
+  // === XP bar — top left, sleek minimal gold ===
+  const lvl = pdata.level;
+  const curr = LVL[lvl] || 0;
+  const next = LVL[lvl + 1] || Infinity;
+  const pct = next === Infinity ? 1 : Math.min(1, (pdata.xp - curr) / (next - curr));
+
+  ctx.fillStyle = 'rgba(12,11,10,0.75)';
+  roundRect(12, 12, 170, 44, 6);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(201,169,110,0.25)';
+  ctx.lineWidth = 0.5;
+  roundRect(12, 12, 170, 44, 6);
+  ctx.stroke();
+
+  ctx.fillStyle = C.gold;
+  ctx.font = '600 12px "DM Sans", sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('Level ' + lvl, 22, 30);
+
+  // Thin gold XP bar
+  ctx.fillStyle = 'rgba(201,169,110,0.15)';
+  roundRect(22, 36, 150, 6, 3);
+  ctx.fill();
+  if (pct > 0) {
+    const xpGrad = ctx.createLinearGradient(22, 36, 22 + 150 * pct, 42);
+    xpGrad.addColorStop(0, C.gold);
+    xpGrad.addColorStop(1, C.roseGold);
+    ctx.fillStyle = xpGrad;
+    roundRect(22, 36, 150 * pct, 6, 3);
+    ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(180,170,155,0.5)';
+  ctx.font = '300 8px "DM Sans", sans-serif';
+  ctx.fillText(next === Infinity ? pdata.xp + ' XP (MAX)' : pdata.xp + ' / ' + next + ' XP', 22, 52);
+
+  // === Cart — top right, gold shopping bag ===
+  const cartCount = state.cart.reduce((s, i) => s + i.qty, 0);
+  const cartTotal = state.cart.reduce((s, i) => s + i.price * i.qty, 0);
+  const cw = 130;
+  ctx.fillStyle = 'rgba(12,11,10,0.75)';
+  roundRect(canvas.width - cw - 12, 12, cw, 32, 6);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(201,169,110,0.25)';
+  ctx.lineWidth = 0.5;
+  roundRect(canvas.width - cw - 12, 12, cw, 32, 6);
+  ctx.stroke();
+
+  // Mini shopping bag icon
+  const bagX = canvas.width - cw - 2;
+  const bagY = 20;
+  ctx.strokeStyle = C.gold;
+  ctx.lineWidth = 1;
+  ctx.fillStyle = 'rgba(201,169,110,0.15)';
+  roundRect(bagX, bagY + 4, 10, 10, 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(bagX + 5, bagY + 4, 4, Math.PI, 0);
+  ctx.stroke();
+
+  ctx.fillStyle = C.champagne;
+  ctx.font = '500 11px "DM Sans", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(cartCount + ' \u2014 $' + cartTotal.toFixed(0), canvas.width - cw / 2 - 6, 33);
+
+  // === Room indicator — elegant banner ===
+  const roomNames = { reception: 'Reception', upperwear: 'Upperwear', lowerwear: 'Lowerwear', tryon: 'Fitting Room' };
+  const roomName = roomNames[state.room];
+  ctx.fillStyle = C.gold;
+  ctx.font = '500 11px "DM Sans", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(roomName, canvas.width / 2, 22);
+  // Thin gold line underneath
+  ctx.strokeStyle = 'rgba(201,169,110,0.3)';
+  ctx.lineWidth = 0.5;
+  const nameW = ctx.measureText(roomName).width;
+  ctx.beginPath();
+  ctx.moveTo(canvas.width / 2 - nameW / 2 - 8, 26);
+  ctx.lineTo(canvas.width / 2 + nameW / 2 + 8, 26);
+  ctx.stroke();
+
+  // === Interaction hints ===
+  if (state.phase === 'free' || state.phase === 'shopping' || state.phase === 'tryon') {
+    const { ox, oy } = offset();
+
+    // Shiro hint
+    if (dist(player.x, player.y, shiro.x, shiro.y) < 2.5) {
+      const hx = ox + shiro.x * TILE + TILE / 2;
+      const hy = oy + shiro.y * TILE - TILE * 1.3;
+      ctx.fillStyle = 'rgba(12,11,10,0.7)';
+      roundRect(hx - 48, hy - 8, 96, 20, 10);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(201,169,110,0.3)';
+      ctx.lineWidth = 0.5;
+      roundRect(hx - 48, hy - 8, 96, 20, 10);
+      ctx.stroke();
+      ctx.fillStyle = C.gold;
+      ctx.font = '500 9px "DM Sans", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('[SPACE] Talk', hx, hy + 7);
+    }
+
+    // Exit door hint
+    if (state.room !== 'reception' && dist(player.x, player.y, 7, ROOM_H - 1) < 2) {
+      const ex = ox + 7 * TILE + TILE / 2;
+      const ey = oy + (ROOM_H - 1) * TILE - 16;
+      ctx.fillStyle = 'rgba(12,11,10,0.7)';
+      roundRect(ex - 55, ey - 8, 110, 20, 10);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(201,169,110,0.3)';
+      ctx.lineWidth = 0.5;
+      roundRect(ex - 55, ey - 8, 110, 20, 10);
+      ctx.stroke();
+      ctx.fillStyle = C.gold;
+      ctx.font = '500 9px "DM Sans", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('[SPACE] Exit Room', ex, ey + 7);
+    }
+  }
+
+  // === Reset Session button (bottom right) ===
+  const rstW = 100, rstH = 24;
+  const rstX = canvas.width - rstW - 12;
+  const rstY = canvas.height - rstH - 8;
+  const rstHover = mouseX >= rstX && mouseX <= rstX + rstW && mouseY >= rstY && mouseY <= rstY + rstH;
+  ctx.fillStyle = rstHover ? 'rgba(183,110,121,0.8)' : 'rgba(183,110,121,0.35)';
+  roundRect(rstX, rstY, rstW, rstH, 12);
+  ctx.fill();
+  ctx.fillStyle = '#f0ece2';
+  ctx.font = '400 9px "DM Sans", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('New Session', rstX + rstW / 2, rstY + 16);
+  state._resetBtn = { x: rstX, y: rstY, w: rstW, h: rstH };
+
+  // === Fullscreen toggle button (top-right, subtle gold) ===
+  {
+    const fsSize = 28;
+    const fsX = canvas.width - fsSize - 8;
+    const fsY = 50;
+    const fsHover = mouseX >= fsX && mouseX <= fsX + fsSize && mouseY >= fsY && mouseY <= fsY + fsSize;
+    ctx.fillStyle = fsHover ? 'rgba(201,169,110,0.35)' : 'rgba(201,169,110,0.15)';
+    roundRect(fsX, fsY, fsSize, fsSize, 5);
+    ctx.fill();
+    ctx.strokeStyle = fsHover ? 'rgba(201,169,110,0.6)' : 'rgba(201,169,110,0.25)';
+    ctx.lineWidth = 0.5;
+    roundRect(fsX, fsY, fsSize, fsSize, 5);
+    ctx.stroke();
+    ctx.fillStyle = fsHover ? C.gold : 'rgba(201,169,110,0.6)';
+    ctx.font = '16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('\u26F6', fsX + fsSize / 2, fsY + fsSize / 2 + 5);
+    state._fullscreenBtn = { x: fsX, y: fsY, w: fsSize, h: fsSize };
+  }
+
+  // === Controls hint (bottom left) ===
+  ctx.fillStyle = 'rgba(180,170,155,0.3)';
+  ctx.font = '300 9px "DM Sans", sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('WASD / Arrows: Move  |  SPACE: Interact', 12, canvas.height - 12);
+}
+
+// ============================================================
+// SESSION RESET
+// ============================================================
+function resetSession() {
+  // Clear all game state
+  state.room = 'reception';
+  state.phase = 'free';
+  state.cart = [];
+  state.visitedRooms = [];
+  state.transition = null;
+  walkSequence = null;
+  popup = null;
+  dlg.active = false;
+  flowRunning = false;
+  avatarCreated = false;
+  particles = [];
+
+  // Reset Shiro memory
+  shiroMemory = { visits: 0, playerName: null, styleNotes: [], purchaseHistory: [], tryOnHistory: [], lastVisit: null, relationship: 0 };
+  sessionHistory = [];
+  localStorage.removeItem('cinderella_shiro_memory');
+
+  // Clear localStorage
+  try {
+    localStorage.removeItem('cinderella_game_avatar');
+  } catch(e) {}
+  avatarData = null;
+
+  // Reset positions
+  setupRoom('reception');
+
+  // Restart intro
+  setTimeout(async () => {
+    shiroMemory.visits++;
+    saveShiroMemory();
+
+    if (!avatarCreated) {
+      const choice = await showDialogue('Shiro', 'Welcome to Cinderella! Before we start, let\'s create your virtual avatar for trying on clothes!', [
+        { text: 'Create My Avatar', value: 'create' },
+        { text: 'Skip for now', value: 'skip' },
+      ]);
+      if (choice === 'create') {
+        await new Promise(resolve => { avatarDoneCallback = resolve; openAvatarCreation(); });
+        avatarDoneCallback = null;
+      }
+    }
+
+    handleShiroTalk();
+  }, 300);
+}
+
+// ============================================================
+// CINDERELLA AI — IN-GAME AVATAR & TRY-ON
+// ============================================================
+// API calls go through our proxy server → Cinderella backend
+const API = ''; // same origin (proxied)
+let avatarCreated = false;
+let avatarData = null; // { canonicalUrl, appearance, measurements, photos }
+
+// Load saved avatar
+try {
+  const saved = JSON.parse(localStorage.getItem('cinderella_game_avatar'));
+  if (saved && saved.canonicalUrl) { avatarData = saved; avatarCreated = true; }
+} catch(e) {}
+
+function saveAvatarLocal() {
+  try { localStorage.setItem('cinderella_game_avatar', JSON.stringify(avatarData)); } catch(e) {}
+}
+
+const overlayEl = () => document.getElementById('overlay');
+const contentEl = () => document.getElementById('overlay-content');
+
+function showOverlay(html) {
+  contentEl().innerHTML = html;
+  overlayEl().style.display = 'block';
+}
+function hideOverlay() {
+  overlayEl().style.display = 'none';
+}
+
+// ─── AVATAR CREATION FLOW ───
+let uploadedPhotos = []; // base64 array
+
+function openAvatarCreation() {
+  uploadedPhotos = [];
+  showOverlay(`
+    <div class="ov-title">✨ Create Your Avatar</div>
+    <div class="ov-subtitle">Upload your photos & enter measurements to create a virtual you</div>
+
+    <div class="ov-card">
+      <div class="ov-label">📷 Your Photos (1-4 photos — front, side, face)</div>
+      <div id="av-photos" class="ov-photos"></div>
+      <button class="ov-btn" onclick="document.getElementById('photo-input').click()">Upload Photos</button>
+      <div class="ov-status" id="av-photo-status">No photos uploaded yet</div>
+    </div>
+
+    <div class="ov-card">
+      <div class="ov-label">📏 Body Measurements</div>
+      <div class="ov-grid2" style="margin-top:8px;">
+        <div class="ov-field">
+          <label class="ov-label">Gender</label>
+          <select class="ov-select" id="av-gender">
+            <option value="female">Female ♀</option>
+            <option value="male">Male ♂</option>
+            <option value="non-binary">Non-binary ⚧</option>
+          </select>
+        </div>
+        <div class="ov-field">
+          <label class="ov-label">Height (cm)</label>
+          <input class="ov-input" id="av-height" type="number" value="165" min="120" max="220" />
+        </div>
+        <div class="ov-field">
+          <label class="ov-label">Weight (kg)</label>
+          <input class="ov-input" id="av-weight" type="number" value="60" min="30" max="200" />
+        </div>
+        <div class="ov-field">
+          <label class="ov-label">Chest (cm)</label>
+          <input class="ov-input" id="av-chest" type="number" value="86" min="50" max="150" />
+        </div>
+        <div class="ov-field">
+          <label class="ov-label">Waist (cm)</label>
+          <input class="ov-input" id="av-waist" type="number" value="71" min="40" max="140" />
+        </div>
+        <div class="ov-field">
+          <label class="ov-label">Hips (cm)</label>
+          <input class="ov-input" id="av-hips" type="number" value="97" min="50" max="160" />
+        </div>
+      </div>
+      <div class="ov-field" style="margin-top:8px;">
+        <label class="ov-label">Body Type</label>
+        <div id="av-bodytype" style="text-align:center;">
+          <span class="ov-bodytype" data-bt="hourglass" onclick="pickBodyType(this)">⏳ Hourglass</span>
+          <span class="ov-bodytype" data-bt="pear" onclick="pickBodyType(this)">🍐 Pear</span>
+          <span class="ov-bodytype" data-bt="apple" onclick="pickBodyType(this)">🍎 Apple</span>
+          <span class="ov-bodytype" data-bt="rectangle" onclick="pickBodyType(this)">▬ Rectangle</span>
+          <span class="ov-bodytype" data-bt="inverted-triangle" onclick="pickBodyType(this)">🔻 Inv. Triangle</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="ov-row">
+      <button class="ov-btn ov-btn-gold" onclick="startAvatarGeneration()">✨ Generate My Avatar</button>
+      <button class="ov-btn ov-btn-dim" onclick="skipAvatar()">Skip for now</button>
+    </div>
+  `);
+
+  // Wire up photo input
+  document.getElementById('photo-input').onchange = handlePhotoUpload;
+}
+
+let selectedBodyType = '';
+function pickBodyType(el) {
+  document.querySelectorAll('.ov-bodytype').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  selectedBodyType = el.dataset.bt;
+}
+
+function handlePhotoUpload(e) {
+  const files = Array.from(e.target.files);
+  files.forEach(file => {
+    if (uploadedPhotos.length >= 4) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      uploadedPhotos.push(ev.target.result);
+      const container = document.getElementById('av-photos');
+      if (container) {
+        container.innerHTML = uploadedPhotos.map(p => `<img src="${p}" />`).join('');
+        document.getElementById('av-photo-status').textContent = `${uploadedPhotos.length} photo(s) uploaded`;
+      }
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function startAvatarGeneration() {
+  if (uploadedPhotos.length === 0) {
+    alert('Please upload at least one photo!');
+    return;
+  }
+
+  const measurements = {
+    gender: document.getElementById('av-gender').value,
+    heightCm: +document.getElementById('av-height').value,
+    weightKg: +document.getElementById('av-weight').value,
+    chestCm: +document.getElementById('av-chest').value,
+    waistCm: +document.getElementById('av-waist').value,
+    hipsCm: +document.getElementById('av-hips').value,
+    bodyType: selectedBodyType || undefined,
+  };
+
+  showOverlay(`
+    <div class="ov-title">✨ Creating Your Avatar</div>
+    <div class="ov-subtitle">Cinderella AI is analyzing your photos...</div>
+    <div class="ov-card" style="text-align:center;">
+      <div class="ov-spin"></div> <span id="av-gen-status" style="color:#ccc;">Analyzing appearance...</span>
+      <div class="ov-progress"><div class="ov-progress-bar" id="av-gen-bar" style="width:10%"></div></div>
+    </div>
+  `);
+
+  try {
+    // Step 1: Analyze photos
+    const analyzeResp = await fetch('/api/avatar/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ images: uploadedPhotos, measurements }),
+    });
+
+    if (!analyzeResp.ok) throw new Error('Analysis failed — ' + (await analyzeResp.json()).error);
+    const { profile: appearance } = await analyzeResp.json();
+
+    document.getElementById('av-gen-status').textContent = 'Generating your avatar image...';
+    document.getElementById('av-gen-bar').style.width = '50%';
+
+    // Step 2: Generate canonical avatar
+    const genResp = await fetch('/api/avatar/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        measurements, appearance,
+        referencePhotos: uploadedPhotos,
+        variant: 'canonical',
+      }),
+    });
+
+    if (!genResp.ok) throw new Error('Generation failed — ' + (await genResp.json()).error);
+    const { url: canonicalUrl } = await genResp.json();
+
+    document.getElementById('av-gen-bar').style.width = '100%';
+
+    // Save avatar data
+    avatarData = { canonicalUrl, appearance, measurements, photos: uploadedPhotos.length };
+    avatarCreated = true;
+    saveAvatarLocal();
+
+    // Show result
+    showOverlay(`
+      <div class="ov-title">🎉 Avatar Created!</div>
+      <div class="ov-subtitle">Meet your virtual self — this is what Cinderella AI will use for try-ons</div>
+      <img src="${canonicalUrl}" class="ov-avatar-img" />
+      <div class="ov-card" style="font-size:12px;">
+        <div class="ov-analysis-item"><span>Face: </span><span>${appearance.faceShape} · ${appearance.eyeColor} eyes</span></div>
+        <div class="ov-analysis-item"><span>Hair: </span><span>${appearance.hairStyle} · ${appearance.hairColor}</span></div>
+        <div class="ov-analysis-item"><span>Build: </span><span>${appearance.build} · ${appearance.bodyShape}</span></div>
+        <div class="ov-analysis-item"><span>Skin: </span><span>${appearance.skinTone}</span></div>
+      </div>
+      <div class="ov-row">
+        <button class="ov-btn ov-btn-gold" onclick="hideOverlay(); avatarDoneCallback && avatarDoneCallback();">✨ Start Shopping!</button>
+      </div>
+    `);
+
+  } catch (err) {
+    showOverlay(`
+      <div class="ov-title" style="color:#e74c3c;">Avatar Generation Failed</div>
+      <div class="ov-card"><p style="color:#ccc;">${err.message}</p></div>
+      <div class="ov-row">
+        <button class="ov-btn" onclick="openAvatarCreation()">Try Again</button>
+        <button class="ov-btn ov-btn-dim" onclick="skipAvatar()">Skip</button>
+      </div>
+    `);
+  }
+}
+
+let avatarDoneCallback = null;
+function skipAvatar() {
+  hideOverlay();
+  if (avatarDoneCallback) avatarDoneCallback();
+}
+
+function markAvatarDone() {
+  avatarCreated = true;
+}
+
+// ─── TRY-ON FLOW ───
+async function openTryOnForItem(item) {
+  showOverlay(`
+    <div class="ov-title">🪞 Virtual Try-On</div>
+    <div class="ov-subtitle">Trying on: ${item.name} by ${item.brand || 'Zara'}</div>
+    <div class="ov-card" style="text-align:center;">
+      <div class="ov-spin"></div> <span id="tryon-status" style="color:#ccc;">Preparing virtual fitting...</span>
+      <div class="ov-progress"><div class="ov-progress-bar" id="tryon-bar" style="width:10%"></div></div>
+    </div>
+  `);
+
+  try {
+    // Get garment image as base64
+    const garmentB64 = await imageToBase64(item.img);
+
+    // Get person image — use avatar canonical if available, else first uploaded photo
+    let personB64;
+    if (avatarData && avatarData.canonicalUrl) {
+      document.getElementById('tryon-status').textContent = 'Loading your avatar...';
+      personB64 = await imageToBase64(avatarData.canonicalUrl);
+    } else {
+      // No avatar — ask for photo
+      showOverlay(`
+        <div class="ov-title">🪞 Virtual Try-On</div>
+        <div class="ov-subtitle">Upload a photo of yourself to try on: ${item.name}</div>
+        <div class="ov-card" style="text-align:center;">
+          <button class="ov-btn" onclick="document.getElementById('photo-input').click()">📷 Upload Photo</button>
+          <div id="tryon-photo-preview" style="margin-top:12px;"></div>
+        </div>
+        <div class="ov-row">
+          <button class="ov-btn ov-btn-dim" onclick="hideOverlay()">Cancel</button>
+        </div>
+      `);
+      // Wait for photo upload
+      document.getElementById('photo-input').onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async (ev) => {
+          personB64 = ev.target.result;
+          document.getElementById('tryon-photo-preview').innerHTML = `<img src="${personB64}" style="max-width:150px; border-radius:8px; border:2px solid #6c5ce7;" />`;
+          await runTryOn(personB64, garmentB64, item);
+        };
+        reader.readAsDataURL(file);
+      };
+      return;
+    }
+
+    document.getElementById('tryon-bar').style.width = '30%';
+    await runTryOn(personB64, garmentB64, item);
+
+  } catch (err) {
+    showOverlay(`
+      <div class="ov-title" style="color:#e74c3c;">Try-On Failed</div>
+      <div class="ov-card"><p style="color:#ccc;">${err.message}</p></div>
+      <div class="ov-row"><button class="ov-btn" onclick="hideOverlay()">Close</button></div>
+    `);
+  }
+}
+
+async function runTryOn(personB64, garmentB64, item) {
+  showOverlay(`
+    <div class="ov-title">🪞 Virtual Try-On</div>
+    <div class="ov-subtitle">${item.name} by ${item.brand || 'Zara'}</div>
+    <div class="ov-card" style="text-align:center;">
+      <div class="ov-spin"></div> <span id="tryon-status2" style="color:#ccc;">AI is fitting the garment on you...</span>
+      <div class="ov-progress"><div class="ov-progress-bar" id="tryon-bar2" style="width:40%"></div></div>
+      <p style="color:#555; font-size:11px; margin-top:8px;">This may take 30-60 seconds</p>
+    </div>
+  `);
+
+  let resultImage = null;
+  let analysis = null;
+
+  // Try avatar-based try-on first (Imagen 4.0 / Gemini — more reliable)
+  try {
+    const payload = {
+      garmentImage: garmentB64,
+      garmentName: item.name,
+      garmentBrand: item.brand || 'Zara',
+    };
+
+    // If we have an avatar with a canonical URL, use the avatar-tryon endpoint
+    if (avatarData && avatarData.canonicalUrl) {
+      payload.avatarUrl = avatarData.canonicalUrl;
+      if (avatarData.measurements) payload.measurements = avatarData.measurements;
+
+      const genResp = await fetch('/api/tryon/avatar-tryon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (genResp.ok) {
+        const data = await genResp.json();
+        if (data.success && data.image) resultImage = data.image;
+      }
+    }
+
+    // Fallback: IDM-VTON with person photo
+    if (!resultImage) {
+      const genResp = await fetch('/api/tryon/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personImage: personB64, garmentImage: garmentB64 }),
+      });
+      if (genResp.ok) {
+        const data = await genResp.json();
+        if (data.success && data.image) resultImage = data.image;
+      }
+    }
+  } catch(e) {}
+
+  if (document.getElementById('tryon-bar2'))
+    document.getElementById('tryon-bar2').style.width = '70%';
+
+  // Get AI fit analysis
+  try {
+    const aResp = await fetch('/api/tryon', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        imageBase64: personB64,
+        garmentName: item.name,
+        garmentBrand: item.brand || 'Zara',
+        garmentPrice: '$' + item.price,
+      }),
+    });
+    if (aResp.ok) analysis = await aResp.json();
+  } catch(e) {}
+
+  // Save state for re-generation
+  currentTryOnItem = item;
+  currentTryOnPersonB64 = personB64;
+  currentTryOnGarmentB64 = garmentB64;
+
+  showTryOnResult(item, resultImage, analysis);
+}
+
+// ─── TRY-ON RESULT WITH SIZE SELECTOR ───
+function showTryOnResult(item, resultImage, analysis, selectedSize) {
+  const sizes = getSizesForItem(item);
+  const recommended = getRecommendedSize(item);
+  const currentSize = selectedSize || recommended;
+  const sizeInfo = sizes.find(s => s.s === currentSize);
+
+  const imgHtml = resultImage
+    ? `<img src="${resultImage}" class="ov-tryon-img" />`
+    : `<div class="ov-card" style="text-align:center;color:#888;">Visual try-on unavailable — see AI analysis below</div>`;
+
+  const sizeBtns = sizes.map(sz => {
+    const isActive = sz.s === currentSize;
+    const isRec = sz.s === recommended;
+    return `<button class="ov-bodytype ${isActive ? 'active' : ''}" onclick="changeTryOnSize('${sz.s}')" style="min-width:50px; position:relative;">
+      ${sz.s}${isRec ? '<span style="position:absolute;top:-6px;right:-6px;font-size:8px;background:#ffd700;color:#1a1a2e;border-radius:4px;padding:1px 3px;">REC</span>' : ''}
+    </button>`;
+  }).join('');
+
+  const sizeDetailsHtml = sizeInfo ? `
+    <div style="text-align:center; color:#888; font-size:11px; margin-top:6px;">
+      Chest: ${sizeInfo.c}cm · Waist: ${sizeInfo.w}cm · Hips: ${sizeInfo.h}cm
+    </div>
+  ` : '';
+
+  const analysisHtml = analysis ? `
+    <div class="ov-card">
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+        <span style="color:#ffd700; font-size:28px; font-weight:bold;">${analysis.fitScore}/10</span>
+        <span style="color:#ccc; font-size:13px;">${analysis.overallVerdict || ''}</span>
+      </div>
+      ${analysis.colorHarmony ? `<div class="ov-analysis-item"><span>🎨 Color: </span><span>${analysis.colorHarmony}</span></div>` : ''}
+      ${analysis.fitRecommendations ? `<div class="ov-analysis-item"><span>📐 Fit: </span><span>${analysis.fitRecommendations}</span></div>` : ''}
+      ${analysis.stylingTips ? `<div class="ov-analysis-item"><span>💡 Tips:</span></div><ul style="color:#ccc;font-size:12px;margin:4px 0 8px 20px;">${analysis.stylingTips.map(t=>'<li>'+t+'</li>').join('')}</ul>` : ''}
+      ${analysis.occasions ? `<div class="ov-analysis-item"><span>📍 Best for: </span><span>${analysis.occasions.join(', ')}</span></div>` : ''}
+    </div>
+  ` : '';
+
+  showOverlay(`
+    <div class="ov-title">🪞 ${item.name}</div>
+    <div class="ov-subtitle">${item.brand || 'Zara'} · $${item.price}</div>
+    ${imgHtml}
+    <div class="ov-card">
+      <div class="ov-label">📏 Select Size</div>
+      <div style="display:flex; justify-content:center; gap:6px; flex-wrap:wrap; margin-top:8px;">
+        ${sizeBtns}
+      </div>
+      ${sizeDetailsHtml}
+      <div class="ov-row" style="margin-top:12px;">
+        <button class="ov-btn ov-btn-gold" onclick="regenerateWithSize('${currentSize}')">
+          ✨ Try On in Size ${currentSize}
+        </button>
+      </div>
+    </div>
+    ${analysisHtml}
+    <div class="ov-row">
+      <button class="ov-btn" onclick="hideOverlay()">← Back to Fitting Room</button>
+      <button class="ov-btn ov-btn-gold" onclick="hideOverlay(); setTimeout(() => { sfxClick(); transitionTo('reception', () => { setupRoom('reception'); state.phase = 'free'; flowRunning = false; if (state.cart.length > 0) setTimeout(() => shiroConverse('I want to checkout now!'), 400); }); }, 100);">💳 Checkout</button>
+    </div>
+  `);
+}
+
+function changeTryOnSize(size) {
+  // Re-render the result screen with new size selected (no regeneration yet)
+  if (currentTryOnItem) {
+    // Keep existing image but update size selection UI
+    const img = document.querySelector('.ov-tryon-img');
+    const existingImage = img ? img.src : null;
+    showTryOnResult(currentTryOnItem, existingImage, null, size);
+  }
+}
+
+async function regenerateWithSize(size) {
+  if (!currentTryOnItem) return;
+  const item = currentTryOnItem;
+
+  // Determine usual size from avatar measurements
+  const usualSize = getRecommendedSize(item);
+
+  showOverlay(`
+    <div class="ov-title">🪞 Regenerating Try-On</div>
+    <div class="ov-subtitle">${item.name} · Size ${size}</div>
+    <div class="ov-card" style="text-align:center;">
+      <div class="ov-spin"></div> <span style="color:#ccc;">Generating try-on in size ${size}${size !== usualSize ? ' (your recommended: '+usualSize+')' : ' (your perfect fit)'}...</span>
+      <div class="ov-progress"><div class="ov-progress-bar" style="width:30%"></div></div>
+      <p style="color:#555; font-size:11px; margin-top:8px;">This may take 30-60 seconds</p>
+    </div>
+  `);
+
+  let resultImage = null;
+  let analysis = null;
+
+  try {
+    // Get garment image
+    const garmentB64 = currentTryOnGarmentB64 || await imageToBase64(item.img);
+
+    // Avatar-based try-on with size info
+    if (avatarData && avatarData.canonicalUrl) {
+      const genResp = await fetch('/api/tryon/avatar-tryon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          avatarUrl: avatarData.canonicalUrl,
+          garmentImage: garmentB64,
+          garmentName: item.name,
+          garmentBrand: item.brand || 'Zara',
+          measurements: avatarData.measurements || null,
+          selectedSize: size,
+          usualSize: usualSize,
+        }),
+      });
+      if (genResp.ok) {
+        const data = await genResp.json();
+        if (data.success && data.image) resultImage = data.image;
+      }
+    }
+
+    // Fallback IDM-VTON
+    if (!resultImage && currentTryOnPersonB64) {
+      const genResp = await fetch('/api/tryon/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personImage: currentTryOnPersonB64, garmentImage: garmentB64 }),
+      });
+      if (genResp.ok) {
+        const data = await genResp.json();
+        if (data.success && data.image) resultImage = data.image;
+      }
+    }
+
+    // AI fit analysis
+    if (currentTryOnPersonB64 || (avatarData && avatarData.canonicalUrl)) {
+      const personImg = currentTryOnPersonB64 || await imageToBase64(avatarData.canonicalUrl);
+      const aResp = await fetch('/api/tryon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: personImg,
+          garmentName: `${item.name} (Size ${size})`,
+          garmentBrand: item.brand || 'Zara',
+          garmentPrice: '$' + item.price,
+        }),
+      });
+      if (aResp.ok) analysis = await aResp.json();
+    }
+
+    showTryOnResult(item, resultImage, analysis, size);
+
+  } catch (err) {
+    showOverlay(`
+      <div class="ov-title" style="color:#e74c3c;">Regeneration Failed</div>
+      <div class="ov-card"><p style="color:#ccc;">${err.message}</p></div>
+      <div class="ov-row"><button class="ov-btn" onclick="hideOverlay()">Close</button></div>
+    `);
+  }
+}
+
+// ─── SIZE DATA (from Cinderella catalog) ───
+const GARMENT_SIZES = {
+  1:[{s:'XS',c:82,w:66,h:88},{s:'S',c:86,w:70,h:92},{s:'M',c:92,w:76,h:98},{s:'L',c:98,w:82,h:104},{s:'XL',c:104,w:88,h:110}],
+  2:[{s:'XS',c:84,w:68,h:86},{s:'S',c:88,w:72,h:90},{s:'M',c:94,w:78,h:96},{s:'L',c:100,w:84,h:102},{s:'XL',c:106,w:90,h:108}],
+  3:[{s:'XS',c:78,w:62,h:84},{s:'S',c:82,w:66,h:88},{s:'M',c:88,w:72,h:94},{s:'L',c:94,w:78,h:100},{s:'XL',c:100,w:84,h:106}],
+  4:[{s:'XS',c:80,w:64,h:90},{s:'S',c:84,w:68,h:94},{s:'M',c:90,w:74,h:100},{s:'L',c:96,w:80,h:106},{s:'XL',c:102,w:86,h:112}],
+  5:[{s:'XS',c:90,w:74,h:92},{s:'S',c:94,w:78,h:96},{s:'M',c:100,w:84,h:102},{s:'L',c:106,w:90,h:108},{s:'XL',c:112,w:96,h:114}],
+  6:[{s:'XS',c:88,w:76,h:90},{s:'S',c:92,w:80,h:94},{s:'M',c:98,w:86,h:100},{s:'L',c:104,w:92,h:106},{s:'XL',c:110,w:98,h:112}],
+  7:[{s:'XS',c:92,w:78,h:96},{s:'S',c:96,w:82,h:100},{s:'M',c:102,w:88,h:106},{s:'L',c:108,w:94,h:112},{s:'XL',c:114,w:100,h:118}],
+  8:[{s:'XS',c:90,w:76,h:94},{s:'S',c:94,w:80,h:98},{s:'M',c:100,w:86,h:104},{s:'L',c:106,w:92,h:110},{s:'XL',c:112,w:98,h:116}],
+  9:[{s:'XS',c:80,w:62,h:88},{s:'S',c:84,w:66,h:92},{s:'M',c:90,w:72,h:98},{s:'L',c:96,w:78,h:104},{s:'XL',c:102,w:84,h:110}],
+  10:[{s:'XS',c:80,w:64,h:90},{s:'S',c:84,w:68,h:94},{s:'M',c:90,w:74,h:100},{s:'L',c:96,w:80,h:106},{s:'XL',c:102,w:86,h:112}],
+  11:[{s:'XS',c:86,w:70,h:90},{s:'S',c:90,w:74,h:94},{s:'M',c:96,w:80,h:100},{s:'L',c:102,w:86,h:106},{s:'XL',c:108,w:92,h:112}],
+  12:[{s:'XS',c:88,w:72,h:92},{s:'S',c:92,w:76,h:96},{s:'M',c:98,w:82,h:102},{s:'L',c:104,w:88,h:108},{s:'XL',c:110,w:94,h:114}],
+  13:[{s:'XS',c:80,w:64,h:88},{s:'S',c:84,w:68,h:92},{s:'M',c:90,w:74,h:98},{s:'L',c:96,w:80,h:104},{s:'XL',c:102,w:86,h:110}],
+  14:[{s:'XS',c:84,w:70,h:86},{s:'S',c:88,w:74,h:90},{s:'M',c:94,w:80,h:96},{s:'L',c:100,w:86,h:102},{s:'XL',c:106,w:92,h:108}],
+};
+const DEFAULT_SIZES = [{s:'XS',c:82,w:66,h:88},{s:'S',c:88,w:72,h:94},{s:'M',c:94,w:78,h:100},{s:'L',c:100,w:84,h:106},{s:'XL',c:106,w:90,h:112}];
+
+function getSizesForItem(item) {
+  return GARMENT_SIZES[item.cid] || DEFAULT_SIZES;
+}
+
+function getRecommendedSize(item) {
+  if (!avatarData || !avatarData.measurements) return 'M';
+  const m = avatarData.measurements;
+  const sizes = getSizesForItem(item);
+  let best = sizes[2]; // default M
+  let bestDiff = Infinity;
+  for (const sz of sizes) {
+    const diff = Math.abs(sz.c - m.chestCm) + Math.abs(sz.w - m.waistCm) + Math.abs(sz.h - m.hipsCm);
+    if (diff < bestDiff) { bestDiff = diff; best = sz; }
+  }
+  return best.s;
+}
+
+// Store current try-on state for re-generation
+let currentTryOnItem = null;
+let currentTryOnPersonB64 = null;
+let currentTryOnGarmentB64 = null;
+
+async function imageToBase64(url) {
+  const resp = await fetch(url);
+  const blob = await resp.blob();
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.readAsDataURL(blob);
+  });
+}
+
+// ─── TRY ON FULL OUTFIT ───
+async function openTryOnFullOutfit() {
+  if (state.cart.length < 2) { openTryOnForItem(state.cart[0]); return; }
+
+  const itemNames = state.cart.map(i => i.name).join(' + ');
+  const totalPrice = state.cart.reduce((s,i) => s + i.price, 0).toFixed(2);
+
+  showOverlay(`
+    <div class="ov-title">🪞 Full Outfit Try-On</div>
+    <div class="ov-subtitle">${itemNames} — $${totalPrice}</div>
+    <div class="ov-card" style="text-align:center;">
+      <div class="ov-spin"></div> <span id="outfit-status" style="color:#ccc;">Generating your complete look...</span>
+      <div class="ov-progress"><div class="ov-progress-bar" id="outfit-bar" style="width:15%"></div></div>
+      <p style="color:#555; font-size:11px; margin-top:8px;">This may take 30-60 seconds</p>
+    </div>
+  `);
+
+  try {
+    // Separate upperwear and lowerwear from cart
+    const upperItem = state.cart.find(c => c.cat === 'upper');
+    const lowerItem = state.cart.find(c => c.cat === 'lower');
+
+    // Compose both garment images into a single combined image (top + bottom stacked)
+    async function composeGarmentImages(items) {
+      const imgs = [];
+      for (const item of items) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = item.img; });
+        imgs.push(img);
+      }
+      const compCanvas = document.createElement('canvas');
+      const w = 400;
+      const perH = Math.round(w * 1.2);
+      compCanvas.width = w;
+      compCanvas.height = perH * imgs.length;
+      const compCtx = compCanvas.getContext('2d');
+      imgs.forEach((img, i) => {
+        const scale = Math.min(w / img.naturalWidth, perH / img.naturalHeight);
+        const sw = img.naturalWidth * scale, sh = img.naturalHeight * scale;
+        compCtx.drawImage(img, (w - sw) / 2, i * perH + (perH - sh) / 2, sw, sh);
+      });
+      return compCanvas.toDataURL('image/jpeg', 0.85);
+    }
+
+    let resultImage = null;
+
+    // Use avatar-tryon with full outfit — compose garment images and describe full outfit
+    if (avatarData && avatarData.canonicalUrl) {
+      const outfitParts = [];
+      if (upperItem) outfitParts.push(upperItem);
+      if (lowerItem) outfitParts.push(lowerItem);
+      // Add any other cart items not categorized
+      state.cart.forEach(c => { if (c !== upperItem && c !== lowerItem) outfitParts.push(c); });
+      if (outfitParts.length === 0) outfitParts.push(...state.cart);
+
+      const composedImage = await composeGarmentImages(outfitParts);
+      const outfitDesc = outfitParts.map(i => `${i.name} by ${i.brand || 'Zara'} (${i.cat === 'upper' ? 'top/upperwear' : 'bottom/lowerwear'})`).join(' AND ');
+      
+      const genResp = await fetch('/api/tryon/avatar-tryon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          avatarUrl: avatarData.canonicalUrl,
+          garmentImage: composedImage,
+          garmentName: outfitDesc,
+          garmentBrand: 'Zara (Complete Outfit)',
+          fitPrompt: `The person is wearing a COMPLETE OUTFIT with multiple pieces: ${outfitDesc}. Show ALL pieces together on the person — the top/upperwear on the upper body and the bottom/lowerwear on the lower body. Both garments must be clearly visible.`,
+          measurements: avatarData.measurements || null,
+        }),
+      });
+      if (genResp.ok) {
+        const data = await genResp.json();
+        if (data.success && data.image) resultImage = data.image;
+      }
+    }
+
+    // Get outfit analysis
+    let analysis = null;
+    const personImg = avatarData?.canonicalUrl ? await imageToBase64(avatarData.canonicalUrl) : null;
+    if (personImg) {
+      const aResp = await fetch('/api/tryon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: personImg,
+          garmentName: itemNames + ' (Complete Outfit)',
+          garmentBrand: 'Zara',
+          garmentPrice: '$' + totalPrice,
+        }),
+      });
+      if (aResp.ok) analysis = await aResp.json();
+    }
+
+    const imgHtml = resultImage
+      ? `<img src="${resultImage}" class="ov-tryon-img" />`
+      : `<div class="ov-card" style="text-align:center;color:#888;">Visual try-on unavailable — see AI analysis below</div>`;
+
+    const cartList = state.cart.map(i => `
+      <div style="display:flex;align-items:center;gap:8px;margin:6px 0;">
+        <img src="${i.img}" style="width:36px;height:36px;border-radius:4px;object-fit:cover;border:1px solid rgba(201,169,110,0.3);" />
+        <span style="color:#fff;font-size:12px;">${i.name}</span>
+        <span style="color:rgba(201,169,110,0.7);font-size:11px;margin-left:auto;">$${i.price}</span>
+      </div>
+    `).join('');
+
+    const analysisHtml = analysis ? `
+      <div class="ov-card">
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+          <span style="color:#c9a96e; font-size:28px; font-weight:bold;">${analysis.fitScore}/10</span>
+          <span style="color:#ccc; font-size:13px;">${analysis.overallVerdict || ''}</span>
+        </div>
+        ${analysis.colorHarmony ? `<div class="ov-analysis-item"><span>🎨 Color: </span><span>${analysis.colorHarmony}</span></div>` : ''}
+        ${analysis.fitRecommendations ? `<div class="ov-analysis-item"><span>📐 Fit: </span><span>${analysis.fitRecommendations}</span></div>` : ''}
+        ${analysis.stylingTips ? `<div class="ov-analysis-item"><span>💡 Tips:</span></div><ul style="color:#ccc;font-size:12px;margin:4px 0 8px 20px;">${analysis.stylingTips.map(t=>'<li>'+t+'</li>').join('')}</ul>` : ''}
+        ${analysis.occasions ? `<div class="ov-analysis-item"><span>📍 Best for: </span><span>${analysis.occasions.join(', ')}</span></div>` : ''}
+      </div>
+    ` : '';
+
+    showOverlay(`
+      <div class="ov-title">🪞 Complete Outfit</div>
+      <div class="ov-subtitle">$${totalPrice} total</div>
+      ${imgHtml}
+      <div class="ov-card">
+        <div style="color:#c9a96e;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Outfit Items</div>
+        ${cartList}
+      </div>
+      ${analysisHtml}
+      <div class="ov-row">
+        <button class="ov-btn ov-btn-gold" onclick="hideOverlay()">✨ Back to Fitting Room</button>
+        <button class="ov-btn" style="background:linear-gradient(135deg,#ffd700,#ff8c00);color:#1a1a2e;border:none;font-weight:bold;" onclick="hideOverlay(); setTimeout(() => { sfxClick(); transitionTo('reception', () => { setupRoom('reception'); state.phase = 'free'; flowRunning = false; setTimeout(() => shiroConverse('I want to checkout now!'), 400); }); }, 100);">💳 Checkout</button>
+      </div>
+    `);
+
+  } catch (err) {
+    showOverlay(`
+      <div class="ov-title" style="color:#e74c3c;">Outfit Try-On Failed</div>
+      <div class="ov-card"><p style="color:#ccc;">${err.message}</p></div>
+      <div class="ov-row"><button class="ov-btn" onclick="hideOverlay()">Close</button></div>
+    `);
+  }
+}
+
+function openTryOnOverlay() {
+  // fallback — show cart items to try
+  if (state.cart.length === 0) { hideOverlay(); return; }
+  openTryOnForItem(state.cart[0]);
+}
+
+// ============================================================
+// AMBIENT PARTICLES (floating gold/champagne dots)
+// ============================================================
+let ambientParticles = [];
+function initAmbientParticles() {
+  for (let i = 0; i < 22; i++) {
+    ambientParticles.push({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      vx: (Math.random() - 0.5) * 0.3,
+      vy: -Math.random() * 0.4 - 0.1,
+      size: Math.random() * 2 + 0.5,
+      alpha: Math.random() * 0.5,
+      alphaDir: Math.random() > 0.5 ? 1 : -1,
+      color: Math.random() > 0.5 ? 'rgba(201,169,110,' : 'rgba(247,231,206,',
+      sparkleTimer: Math.random() * 6000, // sparkle cycle timer
+      sparkleInterval: 3000 + Math.random() * 5000, // how often to sparkle
+    });
+  }
+}
+initAmbientParticles();
+
+function updateAmbientParticles(dt) {
+  ambientParticles.forEach(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.alpha += p.alphaDir * dt / 3000;
+    p.sparkleTimer += dt;
+    if (p.alpha >= 0.6) { p.alpha = 0.6; p.alphaDir = -1; }
+    if (p.alpha <= 0) { p.alpha = 0; p.alphaDir = 1; p.y = canvas.height + 5; p.x = Math.random() * canvas.width; }
+    if (p.y < -10) { p.y = canvas.height + 5; p.x = Math.random() * canvas.width; p.sparkleTimer = 0; }
+    if (p.x < -10) p.x = canvas.width + 10;
+    if (p.x > canvas.width + 10) p.x = -10;
+  });
+}
+
+function drawAmbientParticles() {
+  ambientParticles.forEach(p => {
+    ctx.save();
+    // Sparkle/twinkle: brief bright flash
+    const sparklePhase = p.sparkleTimer % p.sparkleInterval;
+    const isSparkle = sparklePhase < 150; // 150ms flash
+    const sparkleAlpha = isSparkle ? Math.sin((sparklePhase / 150) * Math.PI) : 0;
+    const drawAlpha = Math.min(1, p.alpha + sparkleAlpha * 0.8);
+    const drawSize = p.size + (isSparkle ? sparkleAlpha * 2.5 : 0);
+
+    ctx.globalAlpha = drawAlpha;
+    ctx.fillStyle = p.color + '1)';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, drawSize, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Draw sparkle star rays during flash
+    if (isSparkle && sparkleAlpha > 0.3) {
+      ctx.globalAlpha = sparkleAlpha * 0.6;
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 0.5;
+      const rLen = drawSize * 3;
+      for (let a = 0; a < 4; a++) {
+        const angle = (a / 4) * Math.PI + p.sparkleTimer * 0.001;
+        ctx.beginPath();
+        ctx.moveTo(p.x - Math.cos(angle) * rLen, p.y - Math.sin(angle) * rLen);
+        ctx.lineTo(p.x + Math.cos(angle) * rLen, p.y + Math.sin(angle) * rLen);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  });
+}
+
+function drawVignette() {
+  // Warm center + dark edges vignette
+  const cx = canvas.width / 2, cy = canvas.height / 2;
+  const maxR = Math.sqrt(cx * cx + cy * cy);
+  // Dark vignette edges
+  const grad = ctx.createRadialGradient(cx, cy, canvas.width * 0.2, cx, cy, maxR);
+  grad.addColorStop(0, 'rgba(0,0,0,0)');
+  grad.addColorStop(0.55, 'rgba(0,0,0,0)');
+  grad.addColorStop(1, 'rgba(10,6,2,0.45)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // Warm golden center glow
+  ctx.save();
+  const warmGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, canvas.width * 0.4);
+  warmGrad.addColorStop(0, 'rgba(247,231,206,0.06)');
+  warmGrad.addColorStop(0.5, 'rgba(201,169,110,0.02)');
+  warmGrad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = warmGrad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+
+// ============================================================
+// LEVEL UP PARTICLES
+// ============================================================
+let particles = [];
+function spawnLevelUpParticles() {
+  sfxLevelUp();
+  for (let i = 0; i < 50; i++) {
+    particles.push({
+      x: canvas.width/2, y: canvas.height/2,
+      vx: (Math.random()-0.5)*12, vy: (Math.random()-0.5)*12 - 3,
+      life: 1, color: ['#ffd700','#ff8c00','#ff6b6b','#6c5ce7','#00cec9'][Math.floor(Math.random()*5)],
+      size: 3 + Math.random()*5,
+    });
+  }
+}
+function updateParticles(dt) {
+  particles.forEach(p => { p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life -= dt/2500; });
+  particles = particles.filter(p => p.life > 0);
+}
+function drawParticles() {
+  particles.forEach(p => {
+    ctx.save(); ctx.globalAlpha = p.life; ctx.fillStyle = p.color;
+    ctx.fillRect(p.x-p.size/2, p.y-p.size/2, p.size, p.size);
+    ctx.restore();
+  });
+}
+
+// ============================================================
+// ROOM TITLE CARD (fades in/out during transitions)
+// ============================================================
+function updateTitleCard(dt) {
+  if (!titleCard.active) return;
+  titleCard.timer += dt;
+  if (titleCard.phase === 'in') {
+    titleCard.alpha = Math.min(1, titleCard.timer / 400);
+    if (titleCard.timer > 1200) { titleCard.phase = 'out'; titleCard.timer = 0; }
+  } else if (titleCard.phase === 'out') {
+    titleCard.alpha = Math.max(0, 1 - titleCard.timer / 500);
+    if (titleCard.alpha <= 0) { titleCard.active = false; }
+  }
+}
+
+function drawTitleCard() {
+  if (!titleCard.active || titleCard.alpha <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = titleCard.alpha;
+  // Background pill
+  ctx.font = '600 22px "Playfair Display", serif';
+  const tw = ctx.measureText(titleCard.text).width;
+  const px = (canvas.width - tw) / 2 - 24;
+  const py = canvas.height / 2 - 20;
+  const pw = tw + 48, ph = 46;
+  ctx.fillStyle = 'rgba(12,10,8,0.75)';
+  roundRect(px, py, pw, ph, 14);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(201,169,110,0.5)';
+  ctx.lineWidth = 1;
+  roundRect(px, py, pw, ph, 14);
+  ctx.stroke();
+  // Text
+  ctx.fillStyle = C.gold;
+  ctx.textAlign = 'center';
+  ctx.fillText(titleCard.text, canvas.width / 2, canvas.height / 2 + 8);
+  ctx.restore();
+}
+
+// ============================================================
+// MAIN LOOP
+// ============================================================
+let lastTime = 0;
+
+function gameLoop(ts) {
+  const dt = Math.min(ts - lastTime, 50);
+  lastTime = ts;
+
+  // Update
+  updatePlayer(dt);
+  updateShiro(dt);
+  updateDialogue(dt);
+  updateTransition(dt);
+  updateWalkSequence(dt);
+  updateParticles(dt);
+  updateAmbientParticles(dt);
+  updateTitleCard(dt);
+
+  // Draw
+  ctx.fillStyle = C.bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const { ox, oy } = offset();
+
+  // Room
+  switch(state.room) {
+    case 'reception': drawReception(); break;
+    case 'upperwear': drawProductRoom(C.floorUpper, C.floorUpperDark, '#9b59b6', 'Upperwear Collection', UPPER_PRODUCTS, PRODUCT_POS.upperwear); break;
+    case 'lowerwear': drawProductRoom(C.floorLower, C.floorLowerDark, '#27ae60', 'Lowerwear Collection', LOWER_PRODUCTS, PRODUCT_POS.lowerwear); break;
+    case 'tryon': drawTryOnRoom(); break;
+  }
+
+  // Floor reflection of player (subtle, flipped, low opacity)
+  ctx.save();
+  const plrDrawX = ox + player.x * TILE + TILE / 2;
+  const plrDrawY = oy + player.y * TILE + TILE / 2;
+  const reflOffY = TILE * 1.4 * 0.64; // below character feet
+  ctx.translate(plrDrawX, plrDrawY + reflOffY);
+  ctx.scale(1, -0.5);
+  ctx.globalAlpha = 0.12;
+  drawCharSprite(0, 0, false, player.dir, player.frame);
+  ctx.restore();
+
+  // Shiro
+  const bob = Math.sin(shiro.bobTimer / 400) * 2;
+  drawCharSprite(ox + shiro.x*TILE + TILE/2, oy + shiro.y*TILE + TILE/2, true, 0, 0, bob);
+
+  // Player
+  drawCharSprite(plrDrawX, plrDrawY, false, player.dir, player.frame);
+
+  // Vignette (after room, before UI)
+  drawVignette();
+
+  // Ambient particles
+  drawAmbientParticles();
+
+  // Transition overlay
+  if (state.transition) {
+    ctx.fillStyle = `rgba(0,0,0,${state.transition.alpha})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // Room title card (during transitions)
+  drawTitleCard();
+
+  // UI
+  drawUI();
+
+  // Product popup
+  drawProductPopup();
+
+  // Dialogue
+  drawDialogue();
+
+  // Particles
+  drawParticles();
+
+  requestAnimationFrame(gameLoop);
+}
+
+// --- Init ---
+setupRoom('reception');
+requestAnimationFrame(gameLoop);
+
+// Auto-start intro — avatar creation first, then shopping
+setTimeout(async () => {
+  shiroMemory.visits++;
+  saveShiroMemory();
+
+  if (!avatarCreated) {
+    const choice = await showDialogue('Shiro', 'Welcome to Cinderella! Before we start, let\'s create your virtual avatar for trying on clothes!', [
+      { text: 'Create My Avatar', value: 'create' },
+      { text: 'Skip for now', value: 'skip' },
+    ]);
+    if (choice === 'create') {
+      await new Promise(resolve => { avatarDoneCallback = resolve; openAvatarCreation(); });
+      avatarDoneCallback = null;
+    }
+  }
+
+  handleShiroTalk();
+}, 600);
+
+</script>
+</body>
+</html>
