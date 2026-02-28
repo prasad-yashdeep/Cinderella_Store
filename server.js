@@ -401,7 +401,23 @@ Be specific, honest, and encouraging. If no person image provided, give general 
 
         // ─── Fallback: Gemini image models ───
         if (!resultImage) {
-          const prompt = `You are given two images:\nImage 1: A person (their avatar).\nImage 2: A clothing garment (${garmentLabel}).\n\nGenerate a hyperrealistic photograph of the SAME person from Image 1, now wearing the garment from Image 2.\n- Face, skin tone, hair, body shape: IDENTICAL to Image 1\n- ${fitPrompt}\n- Same studio background and lighting\n- Full body: head to feet\n${measStr ? 'Body measurements: ' + measStr : ''}\nPhotorealistic quality only.`;
+          const prompt = avatarB64
+            ? `CRITICAL: You are given two images. Image 1 is a REFERENCE PERSON — you MUST preserve their EXACT face, skin color, hair color, hair style, body shape, and proportions. Image 2 shows clothing garment(s): ${garmentLabel}.
+
+Your task: Generate a NEW photograph of the EXACT SAME PERSON from Image 1, but now wearing the clothing from Image 2.
+
+MANDATORY requirements:
+- The person's FACE must be IDENTICAL to Image 1 — same eyes, nose, mouth, jawline, skin tone, facial structure
+- Same HAIR color, length, and style as Image 1
+- Same BODY TYPE and proportions as Image 1
+- The clothing from Image 2 must be shown on this person naturally
+- ${fitPrompt}
+- Full body shot, head to feet, plain light gray studio background
+- Professional fashion photography, 85mm lens
+${measStr ? '- Body measurements: ' + measStr : ''}
+
+DO NOT change the person's appearance. The face and body MUST match Image 1 exactly.`
+            : `Generate a hyperrealistic fashion photograph of a model wearing ${garmentLabel}. ${fitPrompt} Full body, studio background, professional lighting. ${measStr}`;
 
           const parts = [];
           if (avatarB64) parts.push({ inline_data: { mime_type: 'image/png', data: avatarB64 } });
@@ -455,9 +471,25 @@ Be specific, honest, and encouraging. If no person image provided, give general 
           const b64g = garmentImage.replace(/^data:image\/\w+;base64,/, '');
           parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64g } });
         }
-        const desc = outfitDescription
-          ? `Generate a virtual try-on: Show a person wearing this complete outfit: ${outfitDescription}. The image shows the garment references. Render a full body studio photograph of a model wearing ALL these pieces together — top on upper body, bottom/pants on lower body. Hyperrealistic, clean studio background, 85mm lens.`
-          : 'Generate a virtual try-on image: Show the person from the first image wearing the garment from the second image. Hyperrealistic, full body, clean studio background. The person must look identical — same face, body, skin tone. Natural garment fit with realistic drape.';
+        const hasPerson = personImage && personImage.length > 100;
+        let desc;
+        if (hasPerson && outfitDescription) {
+          desc = `CRITICAL: Image 1 is a REFERENCE PERSON — you MUST preserve their EXACT face, skin color, hair, body shape. Image 2 shows the outfit garments: ${outfitDescription}.
+
+Generate a photograph of the EXACT SAME PERSON from Image 1 wearing the COMPLETE OUTFIT from Image 2:
+- FACE must be IDENTICAL to Image 1 — same eyes, nose, mouth, skin tone, facial structure
+- Same HAIR color, length, style as Image 1
+- Same BODY TYPE as Image 1
+- Show the top/upperwear on upper body AND pants/lowerwear on lower body — BOTH must be visible
+- Full body, head to feet, plain light gray studio background, professional fashion photography
+DO NOT change the person's appearance.`;
+        } else if (hasPerson) {
+          desc = `CRITICAL: Image 1 is a REFERENCE PERSON — preserve their EXACT face, skin, hair, body. Image 2 shows clothing. Generate a photograph of the SAME PERSON wearing the garment. Face, hair, body MUST be identical to Image 1. Full body, studio background, professional lighting.`;
+        } else if (outfitDescription) {
+          desc = `Generate a fashion photograph of a model wearing this complete outfit: ${outfitDescription}. Show top on upper body and pants on lower body. Full body, studio background, 85mm lens, hyperrealistic.`;
+        } else {
+          desc = 'Generate a virtual try-on: Show a model wearing the garment from the image. Full body, studio background, hyperrealistic.';
+        }
         parts.push({ text: desc });
 
         let resultImage = null;
