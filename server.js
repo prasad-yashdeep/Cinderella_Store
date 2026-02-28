@@ -18,7 +18,8 @@ const PORT = 3003;
 const CINDERELLA = 'https://cinderella.clawbridge.org';
 const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_MODEL = 'gemini-2.5-flash';  // Shiro chat + analysis
-const IMAGEN_MODEL = 'imagen-4.0-generate-001';  // Image generation
+const IMAGEN_MODEL = 'imagen-4.0-generate-001';  // Prompt-only image gen
+const GEMINI_IMAGE_MODELS = ['gemini-2.0-flash-exp-image-generation', 'gemini-2.0-flash-preview-image-generation'];  // Reference-based image gen
 
 const MIME = {
   '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css',
@@ -380,76 +381,43 @@ Be specific, luxurious in tone, and genuinely helpful. If you can't see the pers
 
         let resultImage = null;
 
-        // ─── Try Imagen 4.0 Ultra / 4.0 (if avatar available) ───
-        if (avatarB64) {
-          for (const model of ['imagen-4.0-ultra-generate-001', 'imagen-4.0-generate-001']) {
+        // ─── Gemini Image Gen (primary — supports reference images) ───
+        {
+          const prompt = avatarB64
+            ? `CRITICAL: You are given two images. Image 1 is a REFERENCE PERSON — you MUST preserve their EXACT face, skin color, hair color, hair style, body shape, and proportions. Image 2 shows clothing garment(s): ${garmentLabel}.
+
+Generate a NEW photograph of the EXACT SAME PERSON from Image 1, now wearing the clothing from Image 2.
+- FACE must be IDENTICAL to Image 1
+- Same HAIR, BODY TYPE, SKIN TONE as Image 1
+- ${fitPrompt}
+- Full body, head to feet, plain light gray studio background, 85mm lens
+${measStr ? '- Body measurements: ' + measStr : ''}
+DO NOT change the person's appearance.`
+            : `Generate a hyperrealistic fashion photograph of a model wearing ${garmentLabel}. ${fitPrompt} Full body, studio background, professional lighting. ${measStr}`;
+
+          const parts = [];
+          if (avatarB64) parts.push({ inline_data: { mime_type: 'image/png', data: avatarB64 } });
+          parts.push({ inline_data: { mime_type: 'image/jpeg', data: garmentB64 } });
+          parts.push({ text: prompt });
+
+          for (const model of GEMINI_IMAGE_MODELS) {
             try {
               console.log('[TryOn] Trying ' + model + '...');
-              const imagenBody = JSON.stringify({
-                instances: [{
-                  prompt: imagenPrompt,
-                  referenceImages: [
-                    { referenceType: 2, referenceImage: { bytesBase64Encoded: avatarB64 } },
-                    { referenceType: 1, referenceImage: { bytesBase64Encoded: garmentB64 } },
-                  ],
-                }],
-                parameters: { sampleCount: 1, aspectRatio: '3:4', personGeneration: 'allow_all' },
-              });
-
-              const imgResult = await httpPost(`https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${GEMINI_KEY}`, imagenBody, 90000);
-              const pred = imgResult.predictions?.[0];
-              if (pred?.bytesBase64Encoded) {
-                resultImage = `data:${pred.mimeType || 'image/png'};base64,${pred.bytesBase64Encoded}`;
+              const gemResult = await httpPost(
+                `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`,
+                JSON.stringify({ contents: [{ parts }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'] } }),
+                90000
+              );
+              const respParts = gemResult.candidates?.[0]?.content?.parts || [];
+              const imgPart = respParts.find(p => p.inlineData || p.inline_data);
+              if (imgPart) {
+                const inl = imgPart.inlineData || imgPart.inline_data;
+                resultImage = `data:${inl.mimeType || inl.mime_type || 'image/png'};base64,${inl.data}`;
                 console.log('[TryOn] ✓ Success with ' + model);
                 break;
               }
             } catch (e) { console.log('[TryOn] ' + model + ' error:', e.message); }
           }
-        }
-
-        // ─── Fallback: Gemini image models ───
-        if (!resultImage) {
-          const prompt = avatarB64
-            ? `CRITICAL: You are given two images. Image 1 is a REFERENCE PERSON — you MUST preserve their EXACT face, skin color, hair color, hair style, body shape, and proportions. Image 2 shows clothing garment(s): ${garmentLabel}.
-
-Your task: Generate a NEW photograph of the EXACT SAME PERSON from Image 1, but now wearing the clothing from Image 2.
-
-MANDATORY requirements:
-- The person's FACE must be IDENTICAL to Image 1 — same eyes, nose, mouth, jawline, skin tone, facial structure
-- Same HAIR color, length, and style as Image 1
-- Same BODY TYPE and proportions as Image 1
-- The clothing from Image 2 must be shown on this person naturally
-- ${fitPrompt}
-- Full body shot, head to feet, plain light gray studio background
-- Professional fashion photography, 85mm lens
-${measStr ? '- Body measurements: ' + measStr : ''}
-
-DO NOT change the person's appearance. The face and body MUST match Image 1 exactly.`
-            : `Generate a hyperrealistic fashion photograph of a model wearing ${garmentLabel}. ${fitPrompt} Full body, studio background, professional lighting. ${measStr}`;
-
-          // Fallback: Imagen 4.0 without subject reference (just garment style ref)
-          try {
-            console.log('[TryOn] Fallback: Imagen 4.0 (garment-only)...');
-            const imagenFallbackBody = JSON.stringify({
-              instances: [{
-                prompt: avatarB64
-                  ? `A person wearing ${garmentLabel}. Full body studio photograph, plain light gray background, professional lighting. ${fitPrompt} ${measStr} Hyperrealistic, 85mm lens.`
-                  : `A fashion model wearing ${garmentLabel}. Full body studio photograph, plain light gray background, professional lighting. ${fitPrompt} Hyperrealistic, 85mm lens.`,
-                referenceImages: [
-                  { referenceType: 1, referenceImage: { bytesBase64Encoded: garmentB64 } },
-                  ...(avatarB64 ? [{ referenceType: 2, referenceImage: { bytesBase64Encoded: avatarB64 } }] : []),
-                ],
-              }],
-              parameters: { sampleCount: 1, aspectRatio: '3:4', personGeneration: 'allow_all' },
-            });
-
-            const imgResult = await httpPost(`https://generativelanguage.googleapis.com/v1beta/models/${IMAGEN_MODEL}:predict?key=${GEMINI_KEY}`, imagenFallbackBody, 90000);
-            const pred = imgResult.predictions?.[0];
-            if (pred?.bytesBase64Encoded) {
-              resultImage = `data:${pred.mimeType || 'image/png'};base64,${pred.bytesBase64Encoded}`;
-              console.log('[TryOn] ✓ Success with Imagen 4.0 fallback');
-            }
-          } catch (e) { console.log('[TryOn] Imagen 4.0 fallback error:', e.message); }
         }
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -470,31 +438,39 @@ DO NOT change the person's appearance. The face and body MUST match Image 1 exac
       try {
         const { personImage, garmentImage, outfitDescription } = JSON.parse(Buffer.concat(body).toString());
 
-        // Use Imagen 4.0 for generation
         const hasPerson = personImage && personImage.length > 100;
         const personB64 = hasPerson ? personImage.replace(/^data:image\/\w+;base64,/, '') : null;
         const garmentB64Gen = garmentImage ? garmentImage.replace(/^data:image\/\w+;base64,/, '') : null;
 
-        const prompt = outfitDescription
-          ? `A person wearing a complete outfit: ${outfitDescription}. Show the top on upper body and pants/bottom on lower body. Full body studio photograph, plain light gray background, professional lighting, hyperrealistic, 85mm lens.`
-          : 'A person wearing the garment. Full body studio photograph, plain light gray background, professional lighting, hyperrealistic, 85mm lens.';
+        const prompt = hasPerson
+          ? `CRITICAL: Image 1 is a REFERENCE PERSON — preserve their EXACT face, skin, hair, body. Image 2 shows clothing${outfitDescription ? ': ' + outfitDescription : ''}.
 
-        const referenceImages = [];
-        if (garmentB64Gen) referenceImages.push({ referenceType: 1, referenceImage: { bytesBase64Encoded: garmentB64Gen } });
-        if (personB64) referenceImages.push({ referenceType: 2, referenceImage: { bytesBase64Encoded: personB64 } });
+Generate a photograph of the EXACT SAME PERSON from Image 1 wearing the clothing from Image 2.
+- FACE must be IDENTICAL to Image 1
+- Show the top on upper body AND pants on lower body — BOTH visible
+- Full body, head to feet, plain light gray studio background, 85mm lens
+DO NOT change the person's appearance.`
+          : `Generate a fashion photograph of a model wearing${outfitDescription ? ' this complete outfit: ' + outfitDescription : ' the garment'}. Show top on upper body and pants on lower body. Full body, studio background, 85mm lens, hyperrealistic.`;
+
+        const parts = [];
+        if (personB64) parts.push({ inline_data: { mime_type: 'image/jpeg', data: personB64 } });
+        if (garmentB64Gen) parts.push({ inline_data: { mime_type: 'image/jpeg', data: garmentB64Gen } });
+        parts.push({ text: prompt });
 
         let resultImage = null;
-        for (const model of ['imagen-4.0-ultra-generate-001', IMAGEN_MODEL]) {
+        for (const model of GEMINI_IMAGE_MODELS) {
           try {
             console.log('[TryOn/Generate] Trying ' + model + '...');
-            const imagenBody = JSON.stringify({
-              instances: [{ prompt, referenceImages }],
-              parameters: { sampleCount: 1, aspectRatio: '3:4', personGeneration: 'allow_all' },
-            });
-            const imgResult = await httpPost(`https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${GEMINI_KEY}`, imagenBody, 90000);
-            const pred = imgResult.predictions?.[0];
-            if (pred?.bytesBase64Encoded) {
-              resultImage = `data:${pred.mimeType || 'image/png'};base64,${pred.bytesBase64Encoded}`;
+            const gemResult = await httpPost(
+              `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`,
+              JSON.stringify({ contents: [{ parts }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'] } }),
+              90000
+            );
+            const respParts = gemResult.candidates?.[0]?.content?.parts || [];
+            const imgPart = respParts.find(p => p.inlineData || p.inline_data);
+            if (imgPart) {
+              const inl = imgPart.inlineData || imgPart.inline_data;
+              resultImage = `data:${inl.mimeType || inl.mime_type || 'image/png'};base64,${inl.data}`;
               console.log('[TryOn/Generate] ✓ Success with ' + model);
               break;
             }
@@ -577,35 +553,21 @@ TECHNICAL: Full body head-to-feet, centered, plain solid light gray (#D0D0D0) st
 
         let resultData = null, resultMime = 'image/png';
 
-        // Try Imagen 4.0 Ultra → Imagen 4.0
-        for (const model of ['imagen-4.0-ultra-generate-001', 'imagen-4.0-generate-001']) {
-          try {
-            console.log('[Avatar] Trying ' + model + '...');
-            const imagenBody = JSON.stringify({
-              instances: [{ prompt, ...(refs.length > 0 ? { referenceImages: refs } : {}) }],
-              parameters: { sampleCount: 1, aspectRatio: '3:4', personGeneration: 'allow_all' },
-            });
-            const result = await httpPost(`https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${GEMINI_KEY}`, imagenBody, 120000);
-            const pred = result.predictions?.[0];
-            if (pred?.bytesBase64Encoded) {
-              resultData = pred.bytesBase64Encoded;
-              resultMime = pred.mimeType || 'image/png';
-              console.log('[Avatar] ✓ Generated with ' + model);
-              break;
-            }
-          } catch (e) { console.log('[Avatar] ' + model + ' error:', e.message); }
-        }
-
-        // Fallback: Gemini image gen
-        if (!resultData) {
-          const refParts = (referencePhotos || []).slice(0, 3).map(img => ({
+        // Primary: Gemini Image Gen (supports reference photos as inline_data)
+        {
+          const allRefPhotos = [...(referencePhotos || [])];
+          // Add previous avatar as ref if regenerating
+          if (refs.length > 0) {
+            allRefPhotos.unshift('data:image/png;base64,' + refs[0].referenceImage.bytesBase64Encoded);
+          }
+          const refParts = allRefPhotos.slice(0, 3).map(img => ({
             inline_data: { mime_type: 'image/jpeg', data: img.includes(',') ? img.split(',')[1] : img },
           }));
           const fullPrompt = refParts.length > 0
-            ? `Study ALL reference photos — they show the SAME person. Generate a new image of this EXACT same person.\n\n${prompt}`
+            ? `Study ALL reference photos carefully — they show the SAME person from different angles. Generate a new image that looks like this EXACT same person — same face, skin tone, body shape, hair.\n\n${prompt}`
             : prompt;
 
-          for (const model of ['gemini-2.0-flash-exp-image-generation', 'gemini-2.0-flash-preview-image-generation']) {
+          for (const model of GEMINI_IMAGE_MODELS) {
             try {
               console.log('[Avatar] Trying ' + model + '...');
               const gemResult = await httpPost(
@@ -624,6 +586,24 @@ TECHNICAL: Full body head-to-feet, centered, plain solid light gray (#D0D0D0) st
               }
             } catch (e) { console.log('[Avatar] ' + model + ' error:', e.message); }
           }
+        }
+
+        // Fallback: Imagen 4.0 (prompt-only, no references)
+        if (!resultData) {
+          try {
+            console.log('[Avatar] Trying Imagen 4.0 (prompt-only fallback)...');
+            const imagenBody = JSON.stringify({
+              instances: [{ prompt }],
+              parameters: { sampleCount: 1, aspectRatio: '3:4', personGeneration: 'allow_all' },
+            });
+            const result = await httpPost(`https://generativelanguage.googleapis.com/v1beta/models/${IMAGEN_MODEL}:predict?key=${GEMINI_KEY}`, imagenBody, 120000);
+            const pred = result.predictions?.[0];
+            if (pred?.bytesBase64Encoded) {
+              resultData = pred.bytesBase64Encoded;
+              resultMime = pred.mimeType || 'image/png';
+              console.log('[Avatar] ✓ Generated with Imagen 4.0 (prompt-only)');
+            }
+          } catch (e) { console.log('[Avatar] Imagen fallback error:', e.message); }
         }
 
         if (!resultData) {
