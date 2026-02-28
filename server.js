@@ -17,7 +17,7 @@ try {
 const PORT = 3003;
 const CINDERELLA = 'https://cinderella.clawbridge.org';
 const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_MODEL = 'gemini-3-pro-preview';
 
 const MIME = {
   '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css',
@@ -272,7 +272,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ─── Try-On Fit Analysis ───
+  // ─── Try-On Fit Analysis (matches Cinderella backend) ───
   if (req.url === '/api/tryon' && req.method === 'POST') {
     let body = [];
     req.on('data', c => body.push(c));
@@ -280,36 +280,43 @@ const server = http.createServer(async (req, res) => {
       try {
         const { imageBase64, garmentName, garmentBrand, garmentPrice } = JSON.parse(Buffer.concat(body).toString());
 
-        const prompt = `You are a fashion AI stylist. Analyze how well this garment would suit the person in the photo.
+        const parts = [
+          { text: `You are a luxury fashion styling AI for Cinderella, an elite fashion platform. Analyze this person's photo and provide a personalized virtual try-on analysis for the "${garmentName}" by ${garmentBrand} (${garmentPrice}).
 
-Garment: ${garmentName} by ${garmentBrand} (${garmentPrice})
-
-Respond in this exact JSON format (no markdown):
+Respond in this exact JSON format (no markdown, just raw JSON):
 {
-  "fitScore": 8,
-  "overallVerdict": "Great match for your frame",
-  "colorHarmony": "The tones complement your complexion beautifully",
-  "fitRecommendations": "Go true to size — the relaxed cut suits your proportions",
-  "stylingTips": ["Pair with minimal accessories", "Try tucking the front for a polished look", "White sneakers complete this outfit"],
-  "occasions": ["Casual Friday", "Weekend brunch", "Date night"]
+  "fitScore": <number 1-10>,
+  "overallVerdict": "<one compelling sentence>",
+  "bodyAnalysis": "<brief, tasteful description of body type and proportions>",
+  "colorHarmony": "<how the garment colors work with their skin tone, hair, etc>",
+  "fitRecommendations": "<specific sizing and fit advice>",
+  "stylingTips": ["<tip 1>", "<tip 2>", "<tip 3>"],
+  "complementaryPieces": ["<piece 1 with price range>", "<piece 2 with price range>", "<piece 3 with price range>"],
+  "occasions": ["<occasion 1>", "<occasion 2>", "<occasion 3>"]
 }
 
-Be specific, honest, and encouraging. If no person image provided, give general styling advice.`;
+Be specific, luxurious in tone, and genuinely helpful. If you can't see the person clearly, make reasonable assumptions and note them.` },
+        ];
 
-        const parts = [{ text: prompt }];
         if (imageBase64 && imageBase64.length > 100) {
-          const b64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
-          parts.unshift({ inline_data: { mime_type: 'image/jpeg', data: b64 } });
+          const b64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
+          parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } });
         }
 
         const geminiBody = {
-          contents: [{ role: 'user', parts }],
-          generationConfig: { temperature: 0.7, maxOutputTokens: 512, responseMimeType: 'application/json' },
+          contents: [{ parts }],
+          generationConfig: { temperature: 0.7, maxOutputTokens: 8192 },
         };
 
-        const result = await callGemini(geminiBody);
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`;
+        const raw = await httpPost(url, JSON.stringify(geminiBody), 30000);
+        const text = raw.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) throw new Error('Failed to parse AI response');
+        const analysis = JSON.parse(jsonMatch[0]);
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(result));
+        res.end(JSON.stringify(analysis));
       } catch (e) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: e.message }));
@@ -577,7 +584,12 @@ DO NOT change the person's appearance.`;
 
   fs.readFile(filePath, (err, data) => {
     if (err) { res.writeHead(404); res.end('Not found'); return; }
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+    res.writeHead(200, {
+      'Content-Type': MIME[ext] || 'application/octet-stream',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    });
     res.end(data);
   });
 });
