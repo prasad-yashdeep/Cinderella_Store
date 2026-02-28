@@ -3275,52 +3275,89 @@ async function openTryOnFullOutfit() {
 
     let resultImage = null;
 
-    // Use avatar-tryon with full outfit — compose garment images and describe full outfit
-    if (avatarData && avatarData.canonicalUrl) {
-      const outfitParts = [];
-      if (upperItem) outfitParts.push(upperItem);
-      if (lowerItem) outfitParts.push(lowerItem);
-      // Add any other cart items not categorized
-      state.cart.forEach(c => { if (c !== upperItem && c !== lowerItem) outfitParts.push(c); });
-      if (outfitParts.length === 0) outfitParts.push(...state.cart);
+    // Build outfit from upper + lower only
+    const outfitParts = [];
+    if (upperItem) outfitParts.push(upperItem);
+    if (lowerItem) outfitParts.push(lowerItem);
+    if (outfitParts.length === 0) outfitParts.push(...state.cart);
 
-      const composedImage = await composeGarmentImages(outfitParts);
-      const outfitDesc = outfitParts.map(i => `${i.name} by ${i.brand || 'Zara'} (${i.cat === 'upper' ? 'top/upperwear' : 'bottom/lowerwear'})`).join(' AND ');
-      
-      const genResp = await fetch('/api/tryon/avatar-tryon', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          avatarUrl: avatarData.canonicalUrl,
-          garmentImage: composedImage,
-          garmentName: outfitDesc,
-          garmentBrand: 'Zara (Complete Outfit)',
-          fitPrompt: `The person is wearing a COMPLETE OUTFIT with multiple pieces: ${outfitDesc}. Show ALL pieces together on the person — the top/upperwear on the upper body and the bottom/lowerwear on the lower body. Both garments must be clearly visible.`,
-          measurements: avatarData.measurements || null,
-        }),
-      });
-      if (genResp.ok) {
-        const data = await genResp.json();
-        if (data.success && data.image) resultImage = data.image;
-      }
+    const composedImage = await composeGarmentImages(outfitParts);
+    const outfitDesc = outfitParts.map(i => `${i.name} by ${i.brand || 'Zara'} (${i.cat === 'upper' ? 'top/upperwear' : 'bottom/lowerwear'})`).join(' AND ');
+
+    if (document.getElementById('outfit-bar')) document.getElementById('outfit-bar').style.width = '30%';
+    if (document.getElementById('outfit-status')) document.getElementById('outfit-status').textContent = 'Composing outfit image...';
+
+    // Try avatar-based try-on first
+    if (avatarData && avatarData.canonicalUrl) {
+      try {
+        const genResp = await fetch('/api/tryon/avatar-tryon', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            avatarUrl: avatarData.canonicalUrl,
+            garmentImage: composedImage,
+            garmentName: outfitDesc,
+            garmentBrand: 'Zara (Complete Outfit)',
+            fitPrompt: `The person is wearing a COMPLETE OUTFIT: ${outfitDesc}. Show ALL pieces — the top on the upper body and the bottom/pants on the lower body. Both garments must be clearly visible. Full body studio shot.`,
+            measurements: avatarData.measurements || null,
+          }),
+        });
+        if (genResp.ok) {
+          const data = await genResp.json();
+          if (data.success && data.image) resultImage = data.image;
+        }
+      } catch(e) { console.log('Avatar tryon failed:', e); }
     }
 
-    // Get outfit analysis
+    if (document.getElementById('outfit-bar')) document.getElementById('outfit-bar').style.width = '50%';
+    if (document.getElementById('outfit-status')) document.getElementById('outfit-status').textContent = 'Generating try-on...';
+
+    // Fallback: use /api/tryon/generate with composed garment image (no avatar needed)
+    if (!resultImage) {
+      try {
+        // Use avatar image as person if available, otherwise just garment
+        let personB64 = null;
+        if (avatarData && avatarData.canonicalUrl) {
+          try { personB64 = await imageToBase64(avatarData.canonicalUrl); } catch(e) {}
+        }
+        const genResp = await fetch('/api/tryon/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            personImage: personB64 || composedImage,
+            garmentImage: composedImage,
+            outfitDescription: outfitDesc,
+          }),
+        });
+        if (genResp.ok) {
+          const data = await genResp.json();
+          if (data.success && data.image) resultImage = data.image;
+        }
+      } catch(e) { console.log('Generate tryon failed:', e); }
+    }
+
+    if (document.getElementById('outfit-bar')) document.getElementById('outfit-bar').style.width = '70%';
+    if (document.getElementById('outfit-status')) document.getElementById('outfit-status').textContent = 'Getting style analysis...';
+
+    // Get outfit analysis (works without avatar too)
     let analysis = null;
-    const personImg = avatarData?.canonicalUrl ? await imageToBase64(avatarData.canonicalUrl) : null;
-    if (personImg) {
+    try {
+      let personImg = null;
+      if (avatarData?.canonicalUrl) {
+        try { personImg = await imageToBase64(avatarData.canonicalUrl); } catch(e) {}
+      }
       const aResp = await fetch('/api/tryon', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          imageBase64: personImg,
+          imageBase64: personImg || '',
           garmentName: itemNames + ' (Complete Outfit)',
           garmentBrand: 'Zara',
           garmentPrice: '$' + totalPrice,
         }),
       });
       if (aResp.ok) analysis = await aResp.json();
-    }
+    } catch(e) {}
 
     const imgHtml = resultImage
       ? `<img src="${resultImage}" class="ov-tryon-img" />`

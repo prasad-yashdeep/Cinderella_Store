@@ -202,6 +202,22 @@ function httpPost(url, body, timeout = 30000) {
   });
 }
 
+// ─── HTTP GET → Base64 Helper (for fetching avatar images) ───
+function httpPost_GET(url) {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith('https') ? https : http;
+    mod.get(url, { timeout: 15000 }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return httpPost_GET(res.headers.location).then(resolve).catch(reject);
+      }
+      if (res.statusCode !== 200) { reject(new Error('HTTP ' + res.statusCode)); return; }
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve(Buffer.concat(chunks).toString('base64')));
+    }).on('error', reject);
+  });
+}
+
 // ─── Gemini Text Helper ───
 async function callGemini(geminiBody) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`;
@@ -312,13 +328,26 @@ Be specific, honest, and encouraging. If no person image provided, give general 
 
         if (!garmentImage) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'No garment image' })); return; }
 
-        // Load avatar if it's a URL path
+        // Load avatar image from various sources
         let avatarB64;
-        if (avatarUrl && avatarUrl.startsWith('/')) {
+        if (avatarUrl && avatarUrl.startsWith('data:')) {
+          avatarB64 = avatarUrl.split(',')[1];
+        } else if (avatarUrl && avatarUrl.startsWith('/')) {
+          // Try local file first
           const filePath = path.join(__dirname, avatarUrl);
           try { avatarB64 = fs.readFileSync(filePath).toString('base64'); } catch(e) {}
-        } else if (avatarUrl && avatarUrl.startsWith('data:')) {
-          avatarB64 = avatarUrl.split(',')[1];
+          // Fallback: fetch from Cinderella backend
+          if (!avatarB64) {
+            try {
+              const fetched = await httpPost_GET(`${CINDERELLA}${avatarUrl}`);
+              if (fetched) avatarB64 = fetched;
+            } catch(e) { console.log('[TryOn] Failed to fetch avatar from Cinderella:', e.message); }
+          }
+        } else if (avatarUrl && avatarUrl.startsWith('http')) {
+          try {
+            const fetched = await httpPost_GET(avatarUrl);
+            if (fetched) avatarB64 = fetched;
+          } catch(e) {}
         }
 
         const garmentB64 = garmentImage.includes(',') ? garmentImage.split(',')[1] : garmentImage;
@@ -415,7 +444,7 @@ Be specific, honest, and encouraging. If no person image provided, give general 
     req.on('data', c => body.push(c));
     req.on('end', async () => {
       try {
-        const { personImage, garmentImage } = JSON.parse(Buffer.concat(body).toString());
+        const { personImage, garmentImage, outfitDescription } = JSON.parse(Buffer.concat(body).toString());
 
         const parts = [];
         if (personImage) {
@@ -426,7 +455,10 @@ Be specific, honest, and encouraging. If no person image provided, give general 
           const b64g = garmentImage.replace(/^data:image\/\w+;base64,/, '');
           parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64g } });
         }
-        parts.push({ text: 'Generate a virtual try-on image: Show the person from the first image wearing the garment from the second image. Hyperrealistic, full body, clean studio background. The person must look identical — same face, body, skin tone. Natural garment fit with realistic drape.' });
+        const desc = outfitDescription
+          ? `Generate a virtual try-on: Show a person wearing this complete outfit: ${outfitDescription}. The image shows the garment references. Render a full body studio photograph of a model wearing ALL these pieces together — top on upper body, bottom/pants on lower body. Hyperrealistic, clean studio background, 85mm lens.`
+          : 'Generate a virtual try-on image: Show the person from the first image wearing the garment from the second image. Hyperrealistic, full body, clean studio background. The person must look identical — same face, body, skin tone. Natural garment fit with realistic drape.';
+        parts.push({ text: desc });
 
         let resultImage = null;
         for (const model of ['gemini-2.0-flash-exp-image-generation', 'gemini-2.0-flash-preview-image-generation']) {
